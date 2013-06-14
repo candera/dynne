@@ -1,0 +1,615 @@
+* Experiments
+** Baseline
+#+begin_src clojure
+  (let [max-t (double (* 44100 1.0))
+        inc-t (double (/ 1.0 44100))]
+    (time (loop [t 0.0]
+            (when (< t max-t)
+              (recur (+ t inc-t))))))
+#+end_src
+
+"Elapsed time: 5100.59828 msecs"
+
+Holy crap!
+
+Only wait, this is for 44100 seconds of audio, not one second like I thought.
+
+** Type hints
+#+begin_src clojure
+  (let [^double max-t (double (* 44100 1.0))
+        ^double inc-t (double (/ 1.0 44100))]
+    (time (loop [t 0.0]
+            (when (< t max-t)
+              (recur (+ t inc-t))))))
+#+end_src
+
+Fails because you can't primitive-hint locals like that. The
+`(double)` declaration ought to be enough to get it to use primitive
+math. So WTF is it so slow?
+
+** Using doseq instead
+#+begin_src clojure
+  (let [max-t (double (* 44100 1.0))
+        inc-t (double (/ 1.0 44100))]
+    (time (doseq [t (range 0 max-t inc-t)])))
+#+end_src
+
+"Elapsed time: 55371.522445 msecs"
+
+Yaa!
+
+Only wait, this is for 44100 seconds of audio, not one second like I thought.
+
+** Debugger?
+
+Hmm. I have the debugging enabled in my project. Wonder if that
+matters? Turning it off and doing this again:
+
+#+begin_src clojure
+  (let [max-t (double (* 44100 1.0))
+        inc-t (double (/ 1.0 44100))]
+    (time (loop [t 0.0]
+            (when (< t max-t)
+              (recur (+ t inc-t))))))
+#+end_src
+
+"Elapsed time: 5087.389305 msecs"
+
+Nope.
+
+** Without the double casts?
+
+#+begin_src clojure
+  (let [max-t (* 44100 1.0)
+        inc-t (/ 1.0 44100)]
+    (time (loop [t 0.0]
+            (when (< t max-t)
+              (recur (+ t inc-t))))))
+#+end_src
+
+"Elapsed time: 5101.189955 msecs"
+
+
+** With a literal zero for the initial value of t
+
+#+begin_src clojure
+  (let [max-t (* 44100 1.0)
+        inc-t (/ 1.0 44100)]
+    (time (loop [t 0]
+            (when (< t max-t)
+              (recur (+ t inc-t))))))
+#+end_src
+
+"Elapsed time: 7947.990526 msecs"
+
+** With an long zero for the initial value of t
+
+#+begin_src clojure
+  (let [max-t (* 44100 1.0)
+        inc-t (/ 1.0 44100)]
+    (time (loop [t (long 0)]
+            (when (< t max-t)
+              (recur (+ t inc-t))))))
+#+end_src
+
+"Elapsed time: 7411.203103 msecs"
+
+
+** With an int zero for the initial value of t and a cast on max-t
+
+#+begin_src clojure
+  (let [max-t (double (* 44100 1.0))
+        inc-t (/ 1.0 44100)]
+    (time (loop [t (int 0)]
+            (when (< t max-t)
+              (recur (+ t inc-t))))))
+#+end_src
+
+"Elapsed time: 7299.571628 msecs"
+
+** Same thing, but with the profiler killed and the repl restarted
+
+#+begin_src clojure
+  (let [max-t (double (* 44100 1.0))
+        inc-t (/ 1.0 44100)]
+    (time (loop [t (int 0)]
+            (when (< t max-t)
+              (recur (+ t inc-t))))))
+#+end_src
+
+"Elapsed time: 7406.9407 msecs"
+
+** With only literal values
+
+#+begin_src clojure
+  (time
+   (loop [t 0]
+     (when (< t 1.0)
+       (recur (+ t 2.2675736961451248E-5)))))
+#+end_src
+
+"Elapsed time: 3.055637 msecs"
+
+** With division in the loop
+
+#+begin_src clojure
+  (time
+   (loop [t 0]
+     (when (< t 1.0)
+       (recur (+ t (/ 1.0 44100))))))
+#+end_src
+
+"Elapsed time: 4.770925 msecs"
+
+** With division by a local in the loop
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)]
+    (time
+     (loop [t 0]
+       (when (< t 1.0)
+         (recur (+ t inc-t))))))
+#+end_src
+
+"Elapsed time: 3.64431 msecs"
+
+** With comparison to local in the loop
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        max-t 1.0]
+    (time
+     (loop [t 0]
+       (when (< t max-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+"Elapsed time: 4.422404 msecs"
+
+** One hour of raw iteration via loop
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        max-t 3600.0]
+    (time
+     (loop [t 0]
+       (when (< t max-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 585.542234 msecs"
+: ;;=> nil
+
+** One hour of Math/sin via loop
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        max-t 3600.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (Math/sin t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 5834.65337 msecs"
+: ;;=> nil
+
+** One minute of sampling null sound
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        max-t 60.0
+        s (null-sound)]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 48229.334598 msecs"
+: ;;=> nil
+
+
+** One minute of sampling silence
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        max-t 60.0
+        s (silence 60)]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 153.666386 msecs"
+: ;;=> nil
+
+Wow - that's much faster than the null sound. Something in `sample`
+must be slow. I suspect the call to vec. Let's try taking that out.
+
+** One minute of sampling null sound without vec
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        max-t 60.0
+        s (null-sound)]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 50320.388388 msecs"
+: ;;=> nil
+
+Even slower without the vec! Maybe we should try to make generating
+the zero-samples faster.
+
+** One minute of sampling null sound with memoized zeros
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        max-t 60.0
+        s (null-sound)]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 51290.347651 msecs"
+: ;;=> nil
+
+Still slow! Maybe it's calling channels that's slow, not the zeros.
+Let's try memoizing based on the sound, too.
+
+
+** One minute of sampling null sound with memoized zeros based on sound
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        max-t 60.0
+        s (null-sound)]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 561.872713 msecs"
+: ;;=> nil
+
+Wow - much, much better. OK, so channels is probably slow. Why?
+
+** Baseline performance of 1M loop
+
+#+begin_src clojure
+  (let [n 1000000]
+    (time
+     (loop [n n]
+       (when (pos? n)
+         (recur (dec n))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 11.673236 msecs"
+: ;;=> nil
+
+
+** Baseline performance of calling current impl of channels 1M times
+
+#+begin_src clojure
+  (let [n 1000000
+        s (linear 1.0 1 0)]
+    (time
+     (loop [n n]
+       (when (pos? n)
+         (channels s)
+         (recur (dec n))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 19183.636877 msecs"
+: ;;=> nil
+
+So, yes: slow
+
+** Is satisfies? slow?
+
+#+begin_src clojure
+  (let [n 1000000
+        s (null-sound)]
+    (time
+     (loop [n n]
+       (when (pos? n)
+         (satisfies? impl/Sound s)
+         (recur (dec n))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 60.466917 msecs"
+: ;;=> nil
+
+Nope.
+
+** OK, so is the new version of channels that reifies ChannelCount still slow?
+
+#+begin_src clojure
+  (let [n 1000000
+        s (linear 1.0 1 0)]
+    (time
+     (loop [n n]
+       (when (pos? n)
+         (channels s)
+         (recur (dec n))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 42.306549 msecs"
+: ;;=> nil
+
+Hah. No.
+
+** OK, so now is sampling the null sound slow?
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        max-t 60.0
+        s (null-sound)]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 560.709172 msecs"
+: ;;=> nil
+
+Much faster!
+
+** How is it to iterate over one minute of a WAV file?
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        max-t 60.0
+        s (read-sound "sin.wav")]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 1704.228193 msecs"
+: ;;=> nil
+
+Huh! Not bad. Let's whip out a profiler and see what's slow. Signs
+point to it being vec inside of read-sound's reification of
+amplitudes.
+
+** After removing the call to vec
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        max-t 60.0
+        s (read-sound "sin.wav")]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 969.256816 msecs"
+: ;;=> nil
+
+Quite a bit better. And over 60x realtime. I call that a victory.
+Still, the profiler says that we're spending a lot of time in
+`second`. Let's see if replacing that with nth is any better.
+
+** After removing the call to second by not using destructuring
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        max-t 60.0
+        s (read-sound "sin.wav")]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 987.94372 msecs"
+: ;;=> nil
+
+Hmm. Not much change. But I found other places where we're calling
+first and second
+
+** After removing calls to first and second
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        max-t 60.0
+        s (read-sound "sin.wav")]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 493.927132 msecs"
+: ;;=> nil
+
+Wow! Much better again! Up to 120x realtime.
+
+Now the profiler says it's get. So let's see if we can refactor that
+out of there.
+
+** After removing calls to get
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        max-t 60.0
+        s (read-sound "sin.wav")]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 420.32895 msecs"
+: ;;=> nil
+
+A little better. I think we might be at the point of diminishing
+returns. Profiler says the dominating factor is now self-time in
+sample. Which I'm not sure how to optimize any further easily. Let's
+move on.
+
+** Using an array rather than repeatedly in read-sound
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        max-t 60.0
+        s (read-sound "sin.wav")]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 493.028059 msecs"
+: ;;=> nil
+
+Slightly worse, but the other way was actually broken due to some
+laziness issue I never figured out. Let's call this good for now.
+
+** 4x oversampling of one minute of a file
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample s t 4 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 10794.655395 msecs"
+: ;;=> nil
+
+Wow. Slow, slow, slow. Profiler says it's probably seq-related, since
+oversample does a whole bunch of sequence processing. Seems like a
+good time to try reducers out...
+
+** With map instead of mapv in oversample
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample s t 4 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 9642.868507 msecs"
+: ;;=> nil
+
+Which is only slightly better. We need something else.
+
+** With loops instead of mapping
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample s t 4 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 3607.20579 msecs"
+: ;;=> nil
+
+Much better. The profiler tells us that nth is the culprit. Maybe we
+can get rid of that.
+
+** With a doseq instead of nth
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample s t 4 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 2788.704404 msecs"
+: ;;=> nil
+
+At this point, I'm not sure I can do much better without restructuring
+the way the code works.
+
+* Utility blocks
+** oversample a whole sound file
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t (duration s)]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         ;;(sample s t)
+         (oversample s t 4 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 52836.115106 msecs"
+: ;;=> nil
+
