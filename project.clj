@@ -6,6 +6,8 @@
   :dependencies [[org.clojure/clojure "1.5.1"]
                  [incanter "1.4.0"]
                  [com.googlecode.soundlibs/mp3spi "1.9.5-1"]]
+  :java-source-paths ["src/java"]
+  :source-paths ["src/clj"]
   :profiles {:dev
              {:source-paths ["dev"]
               :dependencies [[org.clojure/tools.namespace "0.2.3"]]
