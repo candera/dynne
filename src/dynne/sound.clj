@@ -12,35 +12,30 @@
             AudioSystem
             Clip]))
 
-(defn channels
-  "Return the number of channels in `sound`."
-  [s]
-  (if (satisfies? impl/ChannelCount s)
-    (impl/num-channels s)
-    (count (impl/amplitudes s 0.0))))
-
 ;; We reserve the right to do something other than fall through to the
-;; implementation, so we park a function in this namespace.
+;; implementation, so we park some functions in this namespace.
+(def ^{:doc "Return the number of channels in `s`."} channels impl/channels)
 (def ^{:doc "Return the duration of `s` in seconds."} duration impl/duration)
-
-(def ^:private zero-frame
-  "Returns a frame of all zeros with the same number of channels as s. Tries to be fast."
-  (memoize (fn [s] (vec (repeat (channels s) 0.0)))))
 
 (defn sample
   "Returns a vector of amplitues from sound `s` at time `t`, or zeros
   if `t` falls outside the sound's range. Call this in preference to
   using the sound's `amplitudes` implementation."
-  [s t]
-  (if (<= 0.0 t (duration s))
-    (impl/amplitudes s t)
-    (zero-frame s)))
+  [s t c]
+  (if (or (< t 0.0) (< (duration s) t))
+    0.0
+    (impl/amplitudes s t c)))
 
-(defn oversample
-  "Returns the mean of sampling `s` `n` steps of `delta-t` around `t`."
-  [s t n delta-t]
-  (let [channels (channels s)
+;; n is fixed at four because we can't have functions that take
+;; primitives with more than four arguments. TODO: Maybe do something
+;; about this.
+(defn oversample4
+  "Returns the mean of sampling `s` on channel `c` 4 steps of `delta-t` around `t`."
+  ^double [s t c delta-t]
+  (let [n 4
+        channels (channels s)
         acc (double-array channels)]
+    (throw (ex-info "Not implemented" {:reason :not-implemented}))
     (dotimes [i n]
       (let [frame (sample s (+ t (* delta-t (double i))))]
         (loop [frame frame
@@ -53,29 +48,34 @@
 ;;; Sound construction
 
 (defn sound
-  "Creates a sound `duration` seconds long whose amplitudes are
-  produced by `f`."
-  [duration f]
-  (let [channels (count (f 0.0))]
-    (reify
-      impl/Sound
-      (duration [this] duration)
-      (amplitudes [this t] (f t))
-
-      impl/ChannelCount
-      (num-channels [this] channels))))
+  "Creates a sound `duration` seconds long where the amplitudes are
+  produced by `f`. If `c`, the number of channels is not provided, it
+  is assumed to be one, and `f` should accept only a single argument
+  (the time). Otherwise, `f` must take a time and a channel number."
+  ([duration f]
+     (reify
+       impl/Sound
+       (channels ^long [this] 1)
+       (duration ^double [this] duration)
+       (amplitudes ^double [this t c] (f t))))
+  ([duration f c]
+     (reify
+       impl/Sound
+       (channels [this] c)
+       (duration [this] duration)
+       (amplitudes [this t c] (f t c)))))
 
 (defn null-sound
   "Returns a zero-duration sound with one channel."
   []
-  (sound 0.0 (constantly [0.0])))
+  (sound 0.0 (constantly 0.0)))
 
 (defn sinusoid
   "Returns a single-channel sound of `duration` and `frequency`."
   [duration ^double frequency]
   (sound duration
          (fn [^double t]
-           [(Math/sin (* t frequency 2.0 Math/PI))])))
+           (Math/sin (* t frequency 2.0 Math/PI)))))
 
 (defn square-wave
   "Produces a single-channel sound that toggles between 1.0 and -1.0
@@ -84,22 +84,20 @@
   (sound duration
          (fn [t]
            (let [x (-> t (* freq 2.0) long)]
-             (if (even? x) [1.0] [-1.0])))))
+             (if (even? x) 1.0 -1.0)))))
 
 (defn linear
-  "Produces a `n`-channel (default 1) sound whose samples move linearly
+  "Produces a single-channel sound whose samples move linearly
   from `start` to `end` over `duration`."
-  ([^double duration ^double start ^double end] (linear duration start end 1))
-  ([^double duration ^double start ^double end n]
-     (let [span (double (- end start))]
-       (sound duration
-              (fn [^double t]
-                (repeat n (+ start (* span (/ t duration)))))))))
+  [^double duration ^double start ^double end]
+  (let [span (double (- end start))]
+    (sound duration
+           (fn [^double t]
+             (+ start (* span (/ t duration)))))))
 
 (defn silence
-  "Creates a `n`-channel sound (default 1) that is `duration` long but silent."
-  ([duration] (silence duration 1))
-  ([duration n] (sound duration (constantly (repeat n 0.0)))))
+  "Creates a single-channel sound that is `duration` long but silent."
+  [duration] (sound duration (constantly 0.0)))
 
 ;;; File-based Sound
 
@@ -161,12 +159,10 @@
         bb                     (java.nio.ByteBuffer/allocate bytes-per-frame)
         frame-array            (double-array channels)]
     (reify
-      impl/ChannelCount
-      (num-channels [s] channels)
-
       impl/Sound
+      (channels [s] channels)
       (duration [s] decoded-length-seconds)
-      (amplitudes [s t]
+      (amplitudes [s t c]
         (let [frame-at-t (-> t (* frames-per-second) long)]
           ;; Desired frame is before current buffer. Reset everything
           ;; to the start state
@@ -210,15 +206,13 @@
                   buffer-byte-offset (* buffer-frame-offset bytes-per-frame)]
               (.position bb 0)
               (.put bb buffer buffer-byte-offset bytes-per-frame)
-              (.position bb 0)
+              (.position bb (* c bytes-per-frame))
               ;; TODO: We're hardcoded to .getShort here, but the
               ;; bits-per-frame is a parameter. Should probably have
               ;; something that knows how to read from a ByteBuffer
               ;; given a number of bits.
-              (dotimes [i channels]
-                (aset frame-array i (/ (double (.getShort bb)) (inc Short/MAX_VALUE))))
-              (seq frame-array))
-            (repeat channels 0))))
+              (/ (double (.getShort bb)) (inc Short/MAX_VALUE)))
+            0)))
 
       java.io.Closeable
       (close [this]
@@ -229,21 +223,20 @@
 ;;; Sound manipulation
 
 (defn multiplex
-  "Turns a single-channel sound into a sound with the same signal on
-  `n` channels."
-  [s n]
-  {:pre [(= 1 (channels s))]}
-  (if (= (channels s) n)
-    s
-    (sound (duration s)
-           (fn [t] (repeat n (first (sample s t)))))))
+  "Uses `channel-map` (a map of source channel numbers to destination
+  channel numbers) to return a sound where the channels have been so
+  remapped."
+  [s channel-map]
+  (sound (duration s)
+         (fn [t c] (sample s t (get channel-map c)))
+         (count (keys channel-map))))
 
 (defn ->stereo
   "Turns a sound into a two-channel sound. Currently works only on
   one- and two-channel inputs."
   [s]
   (case (long (channels s))
-    1 (multiplex s 2)
+    1 (multiplex s {0 0, 1 0})
     2 s
     (throw (ex-info "Can't stereoize sounds with other than one or two channels"
                     {:reason :cant-stereoize-channels :s s}))))
@@ -254,7 +247,8 @@
   have the same number of channels."
   {:pre [(= (channels s1) (channels s2))]}
   (sound (min (duration s1) (duration s2))
-         (fn [t] (mapv * (sample s1 t) (sample s2 t)))))
+         (fn [t c] (* (sample s1 t c) (sample s2 t c)))
+         (channels s1)))
 
 (defn pan
   "Takes a two-channel sound and mixes the channels together by
@@ -267,36 +261,43 @@
   {:pre [(= 2 (channels s))]}
   (let [amount-complement (- 1.0 amount)]
     (sound (duration s)
-           (fn [t]
-             (let [[a b] (sample s t)]
-               [(+ (* a amount-complement)
-                   (* b amount))
-                (+ (* a amount)
-                   (* b amount-complement))])))))
+           (fn [t c]
+             (let [s0 (sample s t 0)
+                   s1 (sample s t 1)]
+               (case c
+                 0 (+ (* s0 amount-complement)
+                      (* s1 amount))
+                 1 (+ (* s0 amount)
+                      (* s1 amount-complement)))))
+           2)))
 
 (defn trim
   "Truncates `s` to the region between `start` and `end`."
   [s start end]
   (sound (- end start)
-         (fn [^double t] (sample s (+ t start)))))
+         (fn [^double t c] (sample s (+ t start) c))
+         (channels s)))
 
 (defn mix
   "Mixes files `s1` and `s2`."
   [s1 s2]
+  {:pre [(= (channels s1) (channels s2))]}
   (sound (max (duration s1) (duration s2))
-         (fn [t]
-           (mapv + (sample s1 t) (sample s2 t)))))
+         (fn [t c]
+           (+ (sample s1 t c) (sample s2 t c)))
+         (channels s1)))
 
 (defn append
   "Concatenates sounds together."
   [s1 s2]
+  {:pre [(= (channels s1) (channels s2))]}
   (let [d1 (duration s1)
         d2 (duration s2)]
     (sound (+ d1 d2)
-           (fn [^double t]
+           (fn [^double t c]
              (if (<= t d1)
-               (sample s1 t)
-               (sample s2 (- t d1)))))))
+               (sample s1 t c)
+               (sample s2 (- t d1) c))))))
 
 (defn timeshift
   "Inserts `amount` seconds of silence at the beginning of `s`"
@@ -307,7 +308,6 @@
   "Fades `s` linearly from zero at the beginning to full volume at
   `duration`."
   [s fade-duration]
-  #_(multiply s (append (linear fade-duration 0 1.0) (linear (duration s) 1.0 1.0)))
   (multiply s (linear (duration s) 1.0 1.0 (channels s))))
 
 (defn fade-out
@@ -371,11 +371,11 @@
                 bytes-to-write (min bytes-remaining buffer-bytes)]
             (.position bb 0)
             (doseq [i (range 0 bytes-to-write (* 2 channels))]
-              (let [t  (byte->t (+ current-byte i))
-                    frame (oversample s t 4 (/ 1.0 sample-rate 4.0))]
+              (let [t  (byte->t (+ current-byte i))]
                 ;;(println t frame)
-                (doseq [samp frame]
-                  (.putShort bb (short-sample samp)))))
+                (dotimes [c channels]
+                  (let [samp (oversample4 s t c (/ 1.0 sample-rate 4.0))]
+                   (.putShort bb (short-sample samp))))))
             (let [bytes-written (.write sdl (.array bb) 0 bytes-to-write)]
               (when-not @stopped (.start sdl))       ; Repeated calls are harmless
               (recur (+ current-byte bytes-written)))))))
@@ -413,13 +413,13 @@
                    bytes-to-read (min len bytes-remaining)
                    bb (java.nio.ByteBuffer/allocate bytes-to-read)]
                (doseq [i (range 0 len bytes-per-frame)]
-                 (let [t     (/ (double (+ i @bytes-read)) (* bytes-per-frame sample-rate))
-                       ;; Oversample to smooth out some of the
-                       ;; time-jitter that I think is introducing
-                       ;; artifacts into the output a bit.
-                       frame (oversample s t 4 (/ 1.0 sample-rate 4.0))]
-                   (doseq [s frame]
-                     (.putShort bb (* s Short/MAX_VALUE)))))
+                 (let [t     (/ (double (+ i @bytes-read)) (* bytes-per-frame sample-rate))]
+                   (dotimes [c channels]
+                     (let [;; Oversample to smooth out some of the
+                           ;; time-jitter that I think is introducing
+                           ;; artifacts into the output a bit.
+                           samp (oversample4 s t c (/ 1.0 sample-rate 4.0))]
+                       (.putShort bb (* s Short/MAX_VALUE))))))
                (.position bb 0)
                (.get bb buf off len)
                (swap! bytes-read + bytes-to-read)
@@ -443,11 +443,11 @@
 (defn visualize
   "Visualizes `s` by plottig it on a graph."
   ([s] (visualize s 0))
-  ([s channel]
+  ([s c]
      (let [duration (duration s)]
        ;; TODO: Maybe use a function that shows power in a window
        ;; around time t rather than just the sample
-       (incanter/view (charts/function-plot #(nth (sample s %) channel 0.0)
+       (incanter/view (charts/function-plot #(sample s % c)
                                             0.0
                                             duration
                                             :step-size (/ duration 4000.0))))))

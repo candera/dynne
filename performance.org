@@ -593,6 +593,46 @@ can get rid of that.
 At this point, I'm not sure I can do much better without restructuring
 the way the code works.
 
+** After the refactoring to explicit channel numbers in sample
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t 0)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 549.15241 msecs"
+: ;;=> nil
+
+** After removing type hints on sample and optimizing <=
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t 0)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 367.410641 msecs"
+: ;;=> nil
+
+Which is pretty good. At this point we think the performance is gated
+by the boxing that's going on because we're using a protocol. Next
+step: use an interface instead.
+
 * Utility blocks
 ** oversample a whole sound file
 
