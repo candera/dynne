@@ -3,7 +3,8 @@
 > "This is my assistant, the awful DYNNE," said Dr. Dischord.
 > "You must forgive his appearance, for he really doesn't have any."
 
-Norton Juster, _The Phantom Tollbooth_
+From _The Phantom Tollbooth_, by Norton Juster
+
 
 ## Usage
 
