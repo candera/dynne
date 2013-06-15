@@ -209,7 +209,7 @@
                   buffer-byte-offset (* buffer-frame-offset bytes-per-frame)]
               (.position bb 0)
               (.put bb buffer buffer-byte-offset bytes-per-frame)
-              (.position bb (* c bytes-per-frame))
+              (.position bb (* c bytes-per-sample))
               ;; TODO: We're hardcoded to .getShort here, but the
               ;; bits-per-frame is a parameter. Should probably have
               ;; something that knows how to read from a ByteBuffer
