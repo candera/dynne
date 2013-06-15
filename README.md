@@ -56,7 +56,7 @@ combined operation is deferred until the combined sound is sampled.
 
 ;; See what its value at time 0.25 is. The final argument is the
 ;; channel number, since sounds can be stereo or even multi-channel
-(sample s2 0.5 0)
+(sample s2 0.25 0)
 ;; => 3.138066912872848E-14
 
 ;; Build up a more complicated sound
