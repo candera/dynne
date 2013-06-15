@@ -1,4 +1,4 @@
-(defproject dynne "0.1.0-SNAPSHOT"
+(defproject org.craigandera/dynne "0.1.0-SNAPSHOT"
   :description "A library for working with audio"
   :url "https://github.com/candera/dynne"
   :license {:name "Eclipse Public License"
@@ -13,5 +13,5 @@
               :dependencies [[org.clojure/tools.namespace "0.2.3"]]
               :jvm-opts ["-Xdebug"
                          "-Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=9900"
-                         "-Dclojure.compiler.disable-locals-clearing=true"]
-              }})
+                         ;; This doesn't seem to be working properly
+                         "-Dclojure.compiler.disable-locals-clearing=true"]}})
