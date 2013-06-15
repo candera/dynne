@@ -6,7 +6,7 @@
             [clojure.repl :refer [doc pst]]
             [clojure.tools.namespace.repl :refer [refresh]]
             [dynne.sound :refer :all]
-            [dynne.sound.impl :as impl])
+            )
   (:import [javax.sound.sampled
             AudioFileFormat$Type
             AudioFormat

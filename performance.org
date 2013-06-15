@@ -633,6 +633,264 @@ Which is pretty good. At this point we think the performance is gated
 by the boxing that's going on because we're using a protocol. Next
 step: use an interface instead.
 
+
+** After refactoring to a Java interface rather than a protocol
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t 0)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 310.098432 msecs"
+: ;;=> nil
+
+No faster. Hmm.
+
+** After putting type hints on the read-sound reify
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t 0)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 365.450692 msecs"
+: ;;=> nil
+
+Now, how does that compare to a not-file sound?
+
+** Sampling of silence
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (silence 60.0)
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (sample s t 0)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 111.675037 msecs"
+: ;;=> nil
+
+OK, so that's sort of the theoretical minimum. What about
+oversampling?
+
+** Oversampling of silence
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (silence 60.0)
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 416.993825 msecs"
+: ;;=> nil
+
+And how does that compare to a file sound?
+
+** Oversampling of file-based sound
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 1285.307141 msecs"
+: ;;=> nil
+
+Interesting. What about that is slow, exactly?
+
+** Calling into .amplitude directly on a file-based sound
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100 4.0)
+        delta-t (/ inc-t 4)
+        s ^dynne.sound.impl.ISound (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (.amplitude s t 0)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 1047.882601 msecs"
+: ;;=> nil
+
+OK. And I just noticed that there are reflection and performance
+warnings. Let's fix those.
+
+** Oversampling silence after fixing some performance warnings
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (silence 60.0)
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 284.798317 msecs"
+: ;;=> nil
+
+Much better! Was about 480 msecs before.
+
+** Oversampling file-based sound after fixing some performance warnings
+
+Previous results: 1200 ms
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 1240.700827 msecs"
+: ;;=> nil
+
+So not really any better. But that has to mostly be in the file stuff,
+because sampling silence is substantially faster.
+
+** Calling into .amplitude directly on a file-based sound again
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100 4.0)
+        delta-t (/ inc-t 4)
+        s ^dynne.sound.impl.ISound (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (.amplitude s t 0)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 1147.476743 msecs"
+: ;;=> nil
+
+Yep. So most of the time we're spending in oversample is actually
+calling into .amplitude. The profiler says that most of our time is in
+self-time of the above function, which doesn't seem likely, since if I
+comment out the call to .amplitude, it's only 30msec. But other than
+that, it complains that "clojure.lang.Numbers.lt" is the next-biggest
+thing!
+
+** Calling into .amplitude directly on a file-based sound again, but with casting to try to get lt to be faster
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100 4.0)
+        delta-t (/ inc-t 4)
+        s ^dynne.sound.impl.ISound (read-sound "sin-long.wav")
+        max-t 3600.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (.amplitude s t 0)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 60768.833847 msecs"
+: ;;=> nil
+
+** Calling .amplitude directly after moving away from atoms to a custom, mutable thingy
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100 4.0)
+        delta-t (/ inc-t 4)
+        s ^dynne.sound.impl.ISound (read-sound "sin-long.wav")
+        max-t 3600.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (.amplitude s t 0)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 44943.919476 msecs"
+: ;;=> nil
+
+That's actually a fair improvement. Profiler says nothing useful at
+this point. Might need to try YourKit to see if it's any better.
+Still: good progress. Let's see what oversampling looks like.
+
+** Oversampling file-based sound after moving away from atoms
+
+Previous results:
+
+#+RESULTS:
+: ;; "Elapsed time: 1240.700827 msecs"
+: ;;=> nil
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 819.078953 msecs"
+: ;;=> nil
+
+Yep: much better. Going to call it a day and commit this.
+
+
 * Utility blocks
 ** oversample a whole sound file
 
@@ -645,11 +903,11 @@ step: use an interface instead.
      (loop [t 0.0]
        (when (< t max-t)
          ;;(sample s t)
-         (oversample s t 4 delta-t)
+         (oversample4 s t 0 delta-t)
          (recur (+ t inc-t))))))
 #+end_src
 
 #+RESULTS:
-: ;; "Elapsed time: 52836.115106 msecs"
+: ;; "Elapsed time: 8319.353929 msecs"
 : ;;=> nil
 
