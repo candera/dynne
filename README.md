@@ -82,6 +82,31 @@ combined operation is deferred until the sound is sampled.
 (def s5 (sound 2.0 (fn [^double t] (rand))))
 ```
 
+## FAQ
+
+### Why did you build this?
+
+I produce the
+[Relevance podcast](http://thinkrelevance.com/blog/tags/podcast). We
+talk about Clojure a lot, so I thought I would see if I could automate
+the podcast production using Clojure. You can see the in-progress
+product of that effort
+[here](https://github.com/candera/podcastifier). Along the way, a
+general-purpose audio processing library started to fall out of it. So
+I busted it out into its own thing, which is now dynne.
+
+### Why didn't you just use Overtone?
+
+Mainly because I started out just playing around with the idea and at
+some point crossed into being completey obsessed with writing my own
+thing. I never even looked at whether
+[Overtone](http://overtone.github.io/) can do what I need, because I
+knew if I did, and it could, I would stop working on the problem, and
+I was having a lot of fun.
+
+In short: if Overtone does anything like this, you should use it. It
+is likely to be much, much better than dynne.
+
 ## License
 
 Copyright © 2013 Craig Andera
