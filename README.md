@@ -29,7 +29,7 @@ Constructors for sounds are given for WAV and MP3 files
 Processor functions accept one or more sounds and return a new sound.
 Combination is by functional composition, so combining two sounds does
 not result in the underlying sound being sampled - computation of the
-combined operation is deferred until the sound is sampled.
+combined operation is deferred until the combined sound is sampled.
 
 ## Usage
 
