@@ -273,7 +273,8 @@
   a sound with separate left and right channels and combine them so
   each appears closer to stereo center. An `amount` of 0.0 would leave
   both channels unchanged, 0.5 would result in both channels being the
-  same, and 1.0 would switch the channels."
+  same (i.e. appearing to be mixed to stereo center), and 1.0 would
+  switch the channels."
   [s amount]
   {:pre [(= 2 (channels s))]}
   (let [amount-complement (- 1.0 amount)]
