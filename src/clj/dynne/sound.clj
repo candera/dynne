@@ -264,7 +264,7 @@
   have the same number of channels."
   {:pre [(= (channels s1) (channels s2))]}
   (sound (min (duration s1) (duration s2))
-         (fn [t c] (* (sample s1 t c) (sample s2 t c)))
+         (fn [^double t ^long c] (* (sample s1 t c) (sample s2 t c)))
          (channels s1)))
 
 (defn pan
