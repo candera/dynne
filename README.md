@@ -78,7 +78,7 @@ combined operation is deferred until the sound is sampled.
 
 ;; read-sound also works with MP3 files, but we can only save to WAV
 
-;; Make a sound of our own design: white noise
+;; Make a sound of our own design: two seconds of white noise
 (def s5 (sound 2.0 (fn [^double t] (rand))))
 ```
 
