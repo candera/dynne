@@ -24,7 +24,7 @@ Amplitudes are represented as double-precision floating point numbers
 between -1.0 and 1.0 (inclusive).
 
 Constructors for sounds are given for WAV and MP3 files
-(_read-sound_), and for arbitrary functions (_sound_).
+( _read-sound_ ), and for arbitrary functions ( _sound_ ).
 
 Processor functions accept one or more sounds and return a new sound.
 Combination is by functional composition, so combining two sounds does
