@@ -323,6 +323,16 @@
   [s amount]
   (append (silence amount (channels s)) s))
 
+(defn channel-dup
+  "Returns a sound that duplicates channel `n` (default 0) of `s2` on
+  the same number of channels `s1` has"
+  ([s1 s2] (channel-dup s1 s2 0))
+  ([s1 s2 n]
+     (sound (duration s2)
+            (fn [^double t ^long c]
+              (sample s2 t n))
+            (channels s1))))
+
 (defn fade-in
   "Fades `s` linearly from zero at the beginning to full volume at
   `duration`."
