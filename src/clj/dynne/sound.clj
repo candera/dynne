@@ -312,10 +312,11 @@
   (let [d1 (duration s1)
         d2 (duration s2)]
     (sound (+ d1 d2)
-           (fn [^double t c]
+           (fn [^double t ^long c]
              (if (<= t d1)
                (sample s1 t c)
-               (sample s2 (- t d1) c))))))
+               (sample s2 (- t d1) c)))
+           (channels s1))))
 
 (defn timeshift
   "Inserts `amount` seconds of silence at the beginning of `s`"
