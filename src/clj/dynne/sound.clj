@@ -336,14 +336,19 @@
 (defn fade-in
   "Fades `s` linearly from zero at the beginning to full volume at
   `duration`."
-  [s fade-duration]
-  (multiply s (linear (duration s) 1.0 1.0 (channels s))))
+  [^ISound s ^double fade-duration]
+  (multiply s (channel-dup
+               s
+               (append (linear fade-duration 0 1.0)
+                       (linear (- (duration s) fade-duration) 1.0 1.0)))))
 
 (defn fade-out
   "Fades the s to zero for the last `duration`."
   [s fade-duration]
-  (multiply s (append (linear (- (duration s) fade-duration) 1.0 1.0)
-                      (linear fade-duration 1.0 0.0))))
+  (multiply s (channel-dup
+               s
+               (append (linear (- (duration s) fade-duration) 1.0 1.0)
+                       (linear fade-duration 1.0 0.0)))))
 
 (defn segmented-linear
   "Produces a single-channels sound whose amplitudes change linear as
