@@ -235,14 +235,28 @@
          (count (keys channel-map))))
 
 (defn ->stereo
-  "Turns a sound into a two-channel sound. Currently works only on
-  one- and two-channel inputs."
-  [s]
-  (case (long (channels s))
-    1 (multiplex s {0 0, 1 0})
-    2 s
-    (throw (ex-info "Can't stereoize sounds with other than one or two channels"
-                    {:reason :cant-stereoize-channels :s s}))))
+  "Creates a stereo sound. If given one single-channel sound,
+  duplicates channel zero on two channels. If given a single stereo
+  sound, returns it. If given two single-channel sounds, returns a
+  sound with the first sound on channel 0 and the second sound on
+  channel 1."
+  ([s] (case (long (channels s))
+         1 (multiplex s {0 0, 1 0})
+         2 s
+         (throw (ex-info "Can't stereoize sounds with other than one or two channels"
+                         {:reason :cant-stereoize-channels :s s}))))
+  ([l r]
+     (when-not (= 1 (channels l) (channels r))
+       (throw (ex-info "Can't steroize two sounds unless they are both single-channel"
+                       {:reason :cant-stereoize-channels
+                        :l-channels (channels l)
+                        :r-channels (channels r)})))
+     (sound (min (duration l) (duration r))
+            (fn [^double t ^long c]
+              (case c
+                0 (sample l t 0)
+                1 (sample r t 1)))
+            2)))
 
 (defn multiply
   [s1 s2]
