@@ -423,7 +423,8 @@
 ;; Oh shit: thread safety, because the underlying implementation over
 ;; files has state. OK, so don't do anything when a sound is playing.
 (defn play
-  "Plays `sound`."
+  "Plays `sound` asynchronously. Returns a value that can be passed to
+  `stop`."
   [s]
   (let [sample-rate 44100
         channels    (channels s)
@@ -449,6 +450,10 @@
      :provider provider
      :sdl      sdl}))
 
+(defn stop
+  "Stops playing the sound represented by `player` (returned from `play`)."
+  [player]
+  (-> player :stop .invoke))
 
 ;;; Serialization
 
