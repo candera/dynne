@@ -378,43 +378,65 @@
   it to the range of a 16-bit integer. Clamps any overflows."
   [f]
   (let [f* (-> f (min 1.0) (max -1.0))]
-    (short (* Short/MAX_VALUE f))))
+    (short (* Short/MAX_VALUE f*))))
 
-(defn play
-  "Plays `sound` asynchronously. Returns a function that, when called,
-  will stop the sound playing."
-  [s]
-  (let [sample-rate  44100
-        channels     (channels s)
-        sdl          (AudioSystem/getSourceDataLine (AudioFormat. sample-rate
-                                                                  16
-                                                                  channels
-                                                                  true
-                                                                  true))
+(defn- sample-provider
+  "Returns a future that pushes byte arrays onto the
+  LinkedBlockingQueue `q` for the sound `s`."
+  [s q sample-rate]
+  (let [channels     (channels s)
         buffer-bytes (* sample-rate channels) ;; Half-second
         bb           (java.nio.ByteBuffer/allocate buffer-bytes)
         total-bytes  (-> s duration (* sample-rate) long (* channels 2))
-        byte->t      (fn [n] (-> n double (/ sample-rate channels 2)))
-        stopped      (atom false)]
-    (future
-      (.open sdl)
-      (loop [current-byte 0]
-        (when (and (not @stopped) (< current-byte total-bytes))
-          (let [bytes-remaining (- total-bytes current-byte)
-                bytes-to-write (min bytes-remaining buffer-bytes)]
-            (.position bb 0)
-            (doseq [i (range 0 bytes-to-write (* 2 channels))]
-              (let [t  (byte->t (+ current-byte i))]
-                ;;(println t frame)
-                (dotimes [c channels]
-                  (let [samp (oversample4 s t c (/ 1.0 sample-rate 4.0))]
+        byte->t      (fn [n] (-> n double (/ sample-rate channels 2)))]
+   (future
+     (loop [current-byte 0]
+       (when (< current-byte total-bytes)
+         (let [bytes-remaining (- total-bytes current-byte)
+               bytes-to-write (min bytes-remaining buffer-bytes)
+               buffer (byte-array bytes-to-write)]
+           (.position bb 0)
+           (doseq [i (range 0 bytes-to-write (* 2 channels))]
+             (let [t  (byte->t (+ current-byte i))]
+               ;;(println t frame)
+               (dotimes [c channels]
+                 (let [samp (oversample4 s t c (/ 1.0 sample-rate 4.0))]
                    (.putShort bb (short-sample samp))))))
-            (let [bytes-written (.write sdl (.array bb) 0 bytes-to-write)]
-              (when-not @stopped (.start sdl))       ; Repeated calls are harmless
-              (recur (+ current-byte bytes-written)))))))
-    (fn []
-      (reset! stopped true)
-      (.stop sdl))))
+           (.position bb 0)
+           (.get bb buffer)
+           ;; Bail if the player gets too far behind
+           (when (.offer q buffer 2 java.util.concurrent.TimeUnit/SECONDS)
+             (recur (+ current-byte bytes-to-write))))))
+     (.put q ::eof))))
+
+;; Oh shit: thread safety, because the underlying implementation over
+;; files has state. OK, so don't do anything when a sound is playing.
+(defn play
+  "Plays `sound`."
+  [s]
+  (let [sample-rate 44100
+        channels    (channels s)
+        sdl         (AudioSystem/getSourceDataLine (AudioFormat. sample-rate
+                                                                 16
+                                                                 channels
+                                                                 true
+                                                                 true))
+        stopped     (atom false)
+        q           (java.util.concurrent.LinkedBlockingQueue. 10)
+        provider    (sample-provider s q sample-rate)]
+    {:player   (future (.open sdl)
+                       (loop [buf (.take q)]
+                         (when-not (or @stopped (= buf ::eof))
+                           (.write sdl buf 0 (alength buf))
+                           (.start sdl) ;; Doesn't hurt to do it more than once
+                           (recur (.take q)))))
+     :stop     (fn []
+                 (reset! stopped true)
+                 (future-cancel provider)
+                 (.stop sdl))
+     :q        q
+     :provider provider
+     :sdl      sdl}))
 
 
 ;;; Serialization
