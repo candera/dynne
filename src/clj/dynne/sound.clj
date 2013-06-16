@@ -98,8 +98,9 @@
              (+ start (* span (/ t duration)))))))
 
 (defn silence
-  "Creates a single-channel sound that is `duration` long but silent."
-  [duration] (sound duration (constantly 0.0)))
+  "Creates a `n`-channel (default 1) sound that is `duration` long but silent."
+  ([duration] (silence duration 1))
+  ([duration n] (sound duration (constantly 0.0) n)))
 
 ;;; File-based Sound
 
