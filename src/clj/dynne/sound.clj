@@ -116,11 +116,10 @@
         (if (pos? frames-left-to-read)
           (let [frames-to-read (min discard-frame-max frames-left-to-read)
                 bytes-to-read (* bytes-per-frame frames-to-read)
-                bytes-read (.read ais discard-buffer (int 0) (int bytes-to-read))
-                frames-read (long (/ bytes-read bytes-per-frame))]
-            (if (neg? frames-read)
+                bytes-read (.read ais discard-buffer (int 0) (int bytes-to-read))]
+            (if (neg? bytes-read)
               total-frames-read
-              (recur (+ total-frames-read frames-read))))
+              (recur (+ total-frames-read (long (/ bytes-read bytes-per-frame))))))
           total-frames-read)))))
 
 (defn read-sound
