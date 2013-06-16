@@ -374,6 +374,14 @@
        (map (fn [[start duration end]] (linear duration start end)))
        (reduce append)))
 
+(defn gain
+  "Returns a sound that is `s` scaled by `g`."
+  [^ISound s ^double g]
+  (sound (duration s)
+         (fn ^double [^double t ^long c]
+           (* g (sample s t c)))
+         (channels s)))
+
 ;;; Playback
 
 (defn short-sample
