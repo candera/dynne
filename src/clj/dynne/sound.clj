@@ -292,7 +292,7 @@
 (defn trim
   "Truncates `s` to the region between `start` and `end`."
   [s start end]
-  (sound (- end start)
+  (sound (min (duration s) (- end start))
          (fn [^double t c] (sample s (+ t start) c))
          (channels s)))
 
