@@ -155,9 +155,7 @@
                                               buffer-seconds
                                               channels
                                               bytes-per-sample))
-        buffer-pos             (dynne.sound.impl.BufferPosition. Long/MAX_VALUE Long/MIN_VALUE)
-        ;; buffer-start-pos       (atom nil)
-        ;; buffer-end-pos         (atom nil)
+        buffer-pos             (dynne.sound.impl.BufferPosition. -1 -1)
         bb                     (java.nio.ByteBuffer/allocate bytes-per-frame)
         frame-array            (double-array channels)]
     (reify
@@ -165,56 +163,60 @@
       (channels [s] channels)
       (duration [s] decoded-length-seconds)
       (amplitude [s t c]
-        (let [frame-at-t (-> t (* frames-per-second) long)]
-          ;; Desired frame is before current buffer. Reset everything
-          ;; to the start state
-          (let [effective-start-of-buffer (.-start buffer-pos)]
-            (when (< frame-at-t effective-start-of-buffer)
-              ;;(println "rewinding")
-              (.close ^AudioInputStream @din)
-              (.close ^AudioInputStream @in)
-              (reset! in (AudioSystem/getAudioInputStream (io/file path)))
-              (reset! din (AudioSystem/getAudioInputStream decoded-format ^AudioInputStream @in))
-              (set! (. buffer-pos start) Long/MAX_VALUE)
-              (set! (. buffer-pos end) -1)))
+        (if (or (< t 0.0) (< decoded-length-seconds t))
+          0
+          (let [frame-at-t (-> t (* frames-per-second) long)]
+            ;; Desired frame is before current buffer. Reset everything
+            ;; to the start state
+            (let [effective-start-of-buffer (.-start buffer-pos)]
+              (when (< frame-at-t effective-start-of-buffer)
+                ;;(println "rewinding")
+                (.close ^AudioInputStream @din)
+                (.close ^AudioInputStream @in)
+                (reset! in (AudioSystem/getAudioInputStream (io/file path)))
+                (reset! din (AudioSystem/getAudioInputStream decoded-format ^AudioInputStream @in))
+                (set! (. buffer-pos start) -1)
+                (set! (. buffer-pos end) -1)))
 
-          ;; Desired position is past the end of the buffered region.
-          ;; Update buffer to include it.
-          (let [effective-end-of-buffer (.-end buffer-pos)]
-            (when (< effective-end-of-buffer frame-at-t)
-              (let [frames-to-advance (- frame-at-t effective-end-of-buffer 1)]
-                ;; We can't skip, because there's state built up during .read
-                ;; (println "Advancing to frame" frame-at-t
-                ;;          "by going forward" frames-to-advance
-                ;;          "frames")
-                (let [frames-advanced (advance-frames @din frames-to-advance)]
-                  (if (= frames-to-advance frames-advanced)
+            ;; Desired position is past the end of the buffered region.
+            ;; Update buffer to include it.
+            (let [effective-end-of-buffer (.-end buffer-pos)]
+              (when (< effective-end-of-buffer frame-at-t)
+                (let [frames-to-advance (- frame-at-t effective-end-of-buffer 1)]
+                  ;; We can't skip, because there's state built up during .read
+                  ;; (println "Advancing to frame" frame-at-t
+                  ;;          "by going forward" frames-to-advance
+                  ;;          "frames")
+                  (let [frames-advanced (advance-frames @din frames-to-advance)]
                     (let [bytes-read (.read ^AudioInputStream @din buffer)]
                       (if (pos? bytes-read)
-                        (let [frames-read (/ bytes-read bytes-per-frame)]
-                          (set! (. buffer-pos start) frame-at-t)
-                          (set! (. buffer-pos end) (+ frame-at-t frames-read -1)))
+                        (let [frames-read (/ bytes-read bytes-per-frame)
+                              new-start-frame (+ (.-end buffer-pos) frames-advanced)]
+                          (set! (. buffer-pos start) new-start-frame)
+                          (set! (. buffer-pos end) (+ new-start-frame frames-read -1)))
                         (do
-                          (set! (. buffer-pos start) Long/MAX_VALUE)
-                          (set! (. buffer-pos end) Long/MIN_VALUE))))
-                    (do
-                      (set! (. buffer-pos start) Long/MAX_VALUE)
-                      (set! (. buffer-pos end) Long/MIN_VALUE)))))))
+                          ;; We're at EOF, so just pretend we're right
+                          ;; before where they asked for, so we don't
+                          ;; get any false rewinds if they
+                          ;; subsequently ask for the next frame
+                          (set! (. buffer-pos start) (- frame-at-t 1))
+                          (set! (. buffer-pos end) (- frame-at-t 1)))))))))
 
-          ;; Now we're either positioned or the requested position
-          ;; cannot be found
-          (if (<= 0 (.-end buffer-pos))
-            (let [buffer-frame-offset (- frame-at-t (.-start buffer-pos))
-                  buffer-byte-offset (* buffer-frame-offset bytes-per-frame)]
-              (.position bb 0)
-              (.put bb buffer buffer-byte-offset bytes-per-frame)
-              (.position bb (* c bytes-per-sample))
-              ;; TODO: We're hardcoded to .getShort here, but the
-              ;; bits-per-frame is a parameter. Should probably have
-              ;; something that knows how to read from a ByteBuffer
-              ;; given a number of bits.
-              (/ (.getShort bb) 32768.0))
-            0)))
+            ;; Now we're either positioned or the requested position
+            ;; cannot be found
+            (if (and (<= (.-start buffer-pos) frame-at-t)
+                     (<= frame-at-t (.-end buffer-pos)))
+              (let [buffer-frame-offset (- frame-at-t (.-start buffer-pos))
+                    buffer-byte-offset (* buffer-frame-offset bytes-per-frame)]
+                (.position bb 0)
+                (.put bb buffer buffer-byte-offset bytes-per-frame)
+                (.position bb (* c bytes-per-sample))
+                ;; TODO: We're hardcoded to .getShort here, but the
+                ;; bits-per-frame is a parameter. Should probably have
+                ;; something that knows how to read from a ByteBuffer
+                ;; given a number of bits.
+                (/ (.getShort bb) 32768.0))
+              0))))
 
       java.io.Closeable
       (close [this]
