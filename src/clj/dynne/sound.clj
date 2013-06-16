@@ -155,7 +155,7 @@
                                               buffer-seconds
                                               channels
                                               bytes-per-sample))
-        buffer-pos             (dynne.sound.impl.BufferPosition. -1 -1)
+        buffer-pos             (dynne.sound.impl.BufferPosition. Long/MAX_VALUE Long/MIN_VALUE)
         ;; buffer-start-pos       (atom nil)
         ;; buffer-end-pos         (atom nil)
         bb                     (java.nio.ByteBuffer/allocate bytes-per-frame)
@@ -175,7 +175,7 @@
               (.close ^AudioInputStream @in)
               (reset! in (AudioSystem/getAudioInputStream (io/file path)))
               (reset! din (AudioSystem/getAudioInputStream decoded-format ^AudioInputStream @in))
-              (set! (. buffer-pos start) -1)
+              (set! (. buffer-pos start) Long/MAX_VALUE)
               (set! (. buffer-pos end) -1)))
 
           ;; Desired position is past the end of the buffered region.
@@ -195,11 +195,11 @@
                           (set! (. buffer-pos start) frame-at-t)
                           (set! (. buffer-pos end) (+ frame-at-t frames-read -1)))
                         (do
-                          (set! (. buffer-pos start) -1)
-                          (set! (. buffer-pos end) -1))))
+                          (set! (. buffer-pos start) Long/MAX_VALUE)
+                          (set! (. buffer-pos end) Long/MIN_VALUE))))
                     (do
-                      (set! (. buffer-pos start) -1)
-                      (set! (. buffer-pos end) -1)))))))
+                      (set! (. buffer-pos start) Long/MAX_VALUE)
+                      (set! (. buffer-pos end) Long/MIN_VALUE)))))))
 
           ;; Now we're either positioned or the requested position
           ;; cannot be found
