@@ -295,7 +295,7 @@
   "Truncates `s` to the region between `start` and `end`."
   [s start end]
   (sound (min (duration s) (- end start))
-         (fn [^double t c] (sample s (+ t start) c))
+         (fn ^double [^double t c] (sample s (+ t start) c))
          (channels s)))
 
 (defn mix
@@ -314,7 +314,7 @@
   (let [d1 (duration s1)
         d2 (duration s2)]
     (sound (+ d1 d2)
-           (fn [^double t ^long c]
+           (fn ^double [^double t ^long c]
              (if (<= t d1)
                (sample s1 t c)
                (sample s2 (- t d1) c)))
@@ -331,7 +331,7 @@
   ([s1 s2] (channel-dup s1 s2 0))
   ([s1 s2 n]
      (sound (duration s2)
-            (fn [^double t ^long c]
+            (fn ^double [^double t ^long c]
               (sample s2 t n))
             (channels s1))))
 
