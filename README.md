@@ -11,7 +11,12 @@ formats, and saved in .wav format.
 
 ## Installation
 
-Not up on clojars yet - coming soon.
+Available on [Clojars](https://clojars.org/org.craigandera/dynne). Put
+this in your `project.clj`:
+
+```
+[org.craigandera/dynne "0.1.0"]
+```
 
 ## Concepts
 
