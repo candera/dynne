@@ -461,42 +461,48 @@
   "Returns an implementation of `InputStream` over `s`."
   [s sample-rate]
   (let [bits-per-sample   16
-        marked-position  (atom nil)
-        bytes-read       (atom 0)
-        total-frames     (-> s duration (* sample-rate) long)
-        channels         (channels s)
-        bytes-per-sample (/ bits-per-sample 8)
-        bytes-per-frame  (* channels bytes-per-sample)
-        total-bytes      (* total-frames bytes-per-frame)]
+        ;;marked-position  (atom nil)
+        current-t         (atom 0)
+        dur               (duration s)
+        total-frames      (-> dur (* sample-rate) long)
+        channels          (channels s)
+        bytes-per-sample  (/ bits-per-sample 8)
+        bytes-per-frame   (* channels bytes-per-sample)
+        total-bytes       (* total-frames bytes-per-frame)
+        seconds-per-frame (/ 1.0 sample-rate)]
     (proxy [java.io.InputStream] []
-      (available [] (- total-bytes @bytes-read))
+      (available [] (- total-bytes (-> dur (- @current-t) (* sample-rate bytes-per-frame))))
       (close [])
-      (mark [readLimit] (reset! marked-position @bytes-read))
-      (markSupported [] true)
+      (mark [readLimit] (throw (UnsupportedOperationException.)))
+      (markSupported [] false)
       (read ^int
         ([] (throw (ex-info "Not implemented" {:reason :not-implemented})))
         ([^bytes buf] (read this buf 0 (alength buf)))
         ([^bytes buf off len]
-           (if (<= total-bytes @bytes-read)
+           (if (< dur @current-t)
              -1
-             (let [frames-to-read (/ len bytes-per-frame)
-                   bytes-remaining (- total-bytes @bytes-read)
-                   bytes-to-read (min len bytes-remaining)
+             (let [start-t (double @current-t)
+                   seconds-remaining (- dur start-t)
+                   buffer-seconds (/ (double len) bytes-per-frame sample-rate)
+                   seconds-to-read (min buffer-seconds seconds-remaining)
+                   bytes-to-read (-> seconds-to-read (* sample-rate bytes-per-frame) long)
                    bb (java.nio.ByteBuffer/allocate bytes-to-read)]
-               (dotimes [i (long (/ len bytes-per-frame))]
-                 (let [t (/ (double (+ i @bytes-read)) (* bytes-per-frame sample-rate))]
-                   (dotimes [c channels]
-                     (let [;; Oversample to smooth out some of the
-                           ;; time-jitter that I think is introducing
-                           ;; artifacts into the output a bit.
-                           samp (oversample4 s t c (/ 1.0 sample-rate 4.0))]
-                       (.putShort bb (* samp Short/MAX_VALUE))))))
+               (if-not (pos? bytes-to-read)
+                 -1
+                 (dotimes [i (long (/ bytes-to-read bytes-per-frame))]
+                   (let [t (+ start-t (* i seconds-per-frame))]
+                     (dotimes [c channels]
+                       (let [ ;; Oversample to smooth out some of the
+                             ;; time-jitter that I think is introducing
+                             ;; artifacts into the output a bit.
+                             samp (oversample4 s t c (/ 1.0 sample-rate 4.0))]
+                         (.putShort bb (short-sample samp)))))))
                (.position bb 0)
                (.get bb buf off len)
-               (swap! bytes-read + bytes-to-read)
+               (swap! current-t + seconds-to-read)
                bytes-to-read))))
-      (reset [] (reset! bytes-read @marked-position))
-      (skip [n] (swap! bytes-read + n)))))
+      (reset [] (throw (UnsupportedOperationException.)))
+      (skip [n] (swap! current-t + (/ (double n) bytes-per-frame sample-rate))))))
 
 (defn save
   "Save sound `s` to `path` as a 16-bit WAV with `sample-rate`."
