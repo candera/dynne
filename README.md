@@ -53,7 +53,7 @@ combined operation is deferred until the combined sound is sampled.
 ;; Play it.
 (play s)
 
-;; Define a new sound that's fades s in over 0.5 seconds
+;; Define a new sound that fades `s` in over 0.5 seconds
 (def s2 (fade-in s 0.5))
 
 ;; Visualize that
@@ -84,7 +84,7 @@ combined operation is deferred until the combined sound is sampled.
 ;; read-sound also works with MP3 files, but we can only save to WAV
 
 ;; Make a sound of our own design: two seconds of white noise
-(def s5 (sound 2.0 (fn [^double t] (rand))))
+(def s5 (sound 2.0 (fn ^double [^double t] (rand))))
 ```
 
 ## FAQ
