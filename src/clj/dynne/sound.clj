@@ -233,7 +233,7 @@
   remapped."
   [s channel-map]
   (sound (duration s)
-         (fn [t c] (sample s t (get channel-map c)))
+         (fn multiplex-fn [t c] (sample s t (get channel-map c)))
          (count (keys channel-map))))
 
 (defn ->stereo
@@ -254,7 +254,7 @@
                         :l-channels (channels l)
                         :r-channels (channels r)})))
      (sound (min (duration l) (duration r))
-            (fn [^double t ^long c]
+            (fn stereo-fn [^double t ^long c]
               (case c
                 0 (sample l t 0)
                 1 (sample r t 1)))
@@ -266,7 +266,7 @@
   have the same number of channels."
   {:pre [(= (channels s1) (channels s2))]}
   (sound (min (duration s1) (duration s2))
-         (fn [^double t ^long c] (* (sample s1 t c) (sample s2 t c)))
+         (fn multiply-fn [^double t ^long c] (* (sample s1 t c) (sample s2 t c)))
          (channels s1)))
 
 (defn pan
@@ -281,7 +281,7 @@
   {:pre [(= 2 (channels s))]}
   (let [amount-complement (- 1.0 amount)]
     (sound (duration s)
-           (fn [^double t ^long c]
+           (fn pan-fn [^double t ^long c]
              (let [s0 (sample s t 0)
                    s1 (sample s t 1)]
                (case c
@@ -295,7 +295,7 @@
   "Truncates `s` to the region between `start` and `end`."
   [s start end]
   (sound (min (duration s) (- end start))
-         (fn ^double [^double t c] (sample s (+ t start) c))
+         (fn trim-fn ^double [^double t c] (sample s (+ t start) c))
          (channels s)))
 
 (defn mix
@@ -303,7 +303,7 @@
   [s1 s2]
   {:pre [(= (channels s1) (channels s2))]}
   (sound (max (duration s1) (duration s2))
-         (fn [t c]
+         (fn mix-fn [t c]
            (+ (sample s1 t c) (sample s2 t c)))
          (channels s1)))
 
@@ -314,7 +314,7 @@
   (let [d1 (duration s1)
         d2 (duration s2)]
     (sound (+ d1 d2)
-           (fn ^double [^double t ^long c]
+           (fn append-fn ^double [^double t ^long c]
              (if (<= t d1)
                (sample s1 t c)
                (sample s2 (- t d1) c)))
@@ -331,7 +331,7 @@
   ([s1 s2] (channel-dup s1 s2 0))
   ([s1 s2 n]
      (sound (duration s2)
-            (fn ^double [^double t ^long c]
+            (fn channel-dup-fn ^double [^double t ^long c]
               (sample s2 t n))
             (channels s1))))
 
@@ -378,7 +378,7 @@
   "Returns a sound that is `s` scaled by `g`."
   [^ISound s ^double g]
   (sound (duration s)
-         (fn ^double [^double t ^long c]
+         (fn gain-fn ^double [^double t ^long c]
            (* g (sample s t c)))
          (channels s)))
 
