@@ -911,3 +911,127 @@ Yep: much better. Going to call it a day and commit this.
 : ;; "Elapsed time: 8319.353929 msecs"
 : ;;=> nil
 
+
+* Experiments, round 2
+
+** Repeat oversampling file-based sound after moving away from atoms
+
+Previous results:
+
+#+RESULTS:
+: ;; "Elapsed time: 819.078953 msecs"
+: ;;=> nil
+
+At commit 96de01a
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 3317.199901 msecs"
+: ;;=> nil
+
+Wow - much slower. Let's try again with an older commit.
+
+** Trying against with commit 94efc1d
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 3284.966559 msecs"
+: ;;=> nil
+
+Still really slow. WTF?!
+
+** Trying again with commit b134fd981895e5c5f169c18de52108a4bae0faf9
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 3281.916644 msecs"
+: ;;=> nil
+
+Do not understand...
+
+** Against a sinusoid with commit b134fd981895e5c5f169c18de52108a4bae0faf9
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (sinusoid 600 440)
+        max-t 600.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 18541.165752 msecs"
+: ;;=> nil
+
+Wow. That should not be anywhere near that slow...how was it as fast
+as it was before?
+
+The weird thing is, the profiler is reporting that ll the time is in
+the benchmarking code, not in the dynne code itself. Maybe I should
+try this on a different OS.
+
+
+
+** A simple combination of operations, baseline
+
+#+begin_src clojure
+  (let [path (str  "test" dur ".wav")
+        dur 60]
+    (when-not (.exists (io/file path))
+      (save (->stereo (sinusoid dur 440)) path 44100))
+    (-> path
+        read-sound
+        ;;(sinusoid dur 440)
+        ->stereo
+        (fade-in 20)
+        (fade-out 20)
+        (mix (-> (square-wave 60 880)
+                 (timeshift (/ dur 2))
+                 (->stereo)))
+        ;;(visualize)
+        ;;(save (str "test-out" dur ".wav") 44100)
+        oversample-all
+        time
+        ))
+#+end_src
+
+#+RESULTS:
+: ;;=> 
+
