@@ -9,10 +9,9 @@
                  [primitive-math "0.1.2"]]
   :java-source-paths ["src/java"]
   :source-paths ["src/clj"]
+  :global-vars {*warn-on-reflection* true}
   :profiles {:dev
              {:source-paths ["dev"]
               :dependencies [[org.clojure/tools.namespace "0.2.3"]]
               :jvm-opts ["-Xdebug"
-                         "-Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=9900"
-                         ;; This doesn't seem to be working properly
-                         "-Dclojure.compiler.disable-locals-clearing=true"]}})
+                         "-Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=9900"]}})

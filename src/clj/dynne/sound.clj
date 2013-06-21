@@ -11,21 +11,21 @@
             AudioInputStream
             AudioSystem
             Clip]
-           [dynne.sound.impl ISound]
+           [dynne.sound.impl ISound MutableDouble BufferPosition]
            [java.util.concurrent LinkedBlockingQueue]))
 
 ;; We reserve the right to do something other than fall through to the
 ;; implementation, so we park some wrapper functions in this namespace.
 
-(defn channels
+(defmacro channels
   "Return the number of channels in `s`."
   ^long [^ISound s]
-  (.channels s))
+  `(.channels ~s))
 
-(defn duration
+(defmacro duration
   "Return the duration of `s` in seconds."
   ^double [^ISound s]
-  (.duration s))
+  `(.duration ~s))
 
 (defn sample
   "Returns a vector of amplitues from sound `s` at time `t`, or zero
@@ -56,13 +56,13 @@
   produced by `f`. If `c`, the number of channels is not provided, it
   is assumed to be one, and `f` should accept only a single argument
   (the time). Otherwise, `f` must take a time and a channel number."
-  ([duration f]
+  ([^double duration f]
      (reify
        ISound
        (channels [this] 1)
        (duration [this] duration)
        (amplitude [this t c] (f t))))
-  ([duration f c]
+  ([^double duration f ^long c]
      (reify
        ISound
        (channels [this] c)
@@ -71,12 +71,12 @@
 
 (defn null-sound
   "Returns a zero-duration sound with one channel."
-  []
+  ^ISound []
   (sound 0.0 (constantly 0.0)))
 
-(defn sinusoid
+(defn ^ISound sinusoid
   "Returns a single-channel sound of `duration` and `frequency`."
-  [duration ^double frequency]
+  [^double duration ^double frequency]
   (sound duration
          (fn sinusoid-fn ^double [^double t]
            (Math/sin (p/* t frequency 2.0 Math/PI)))))
@@ -84,7 +84,7 @@
 (defn square-wave
   "Produces a single-channel sound that toggles between 1.0 and -1.0
   at frequency `freq`."
-  [duration freq]
+  ^ISound [^double duration ^double freq]
   (sound duration
          (fn square-wav-fn ^double [^double t]
            (let [x (-> t (p/* freq 2.0) long)]
@@ -93,7 +93,7 @@
 (defn linear
   "Produces a single-channel sound whose samples move linearly
   from `start` to `end` over `duration`."
-  [^double duration ^double start ^double end]
+  ^ISound [^double duration ^double start ^double end]
   (let [span (double (- end start))]
     (sound duration
            (fn linear-fn ^double [^double t]
@@ -101,15 +101,15 @@
 
 (defn silence
   "Creates a `n`-channel (default 1) sound that is `duration` long but silent."
-  ([duration] (silence duration 1))
-  ([duration n] (sound duration (constantly 0.0) n)))
+  (^ISound [^double duration] (silence duration 1))
+  (^ISound [^double duration ^long n] (sound duration (constantly 0.0) n)))
 
 ;;; File-based Sound
 
 (defn- advance-frames
   "Reads and discards `n` frames from AudioInputStream `ais`. Returns
   the number of frames actually read."
-  [^AudioInputStream ais n]
+  ^long [^AudioInputStream ais ^long n]
   (let [bytes-per-frame (-> ais .getFormat .getFrameSize)
         discard-frame-max 1000
         discard-buffer-bytes (p/* bytes-per-frame discard-frame-max)
@@ -125,7 +125,7 @@
               (recur (p/+ total-frames-read (long (/ bytes-read bytes-per-frame))))))
           total-frames-read)))))
 
-(defn read-sound
+(defn ^ISound read-sound
   "Returns a Sound for the file at `path`."
   [path]
   (let [file                   (io/file path)
@@ -135,7 +135,7 @@
         base-file-properties   (.properties base-file-format)
         base-file-duration     (get base-file-properties "duration")
         bits-per-sample        16
-        bytes-per-sample       (/ bits-per-sample 8)
+        bytes-per-sample       (long (/ bits-per-sample 8))
         channels               (.getChannels base-format)
         bytes-per-frame        (* bytes-per-sample channels)
         frames-per-second      (.getSampleRate base-format)
@@ -158,7 +158,7 @@
                                               buffer-seconds
                                               channels
                                               bytes-per-sample))
-        buffer-pos             (dynne.sound.impl.BufferPosition. -1 -1)
+        buffer-pos             (BufferPosition. -1 -1)
         bb                     (java.nio.ByteBuffer/allocate bytes-per-frame)
         frame-array            (double-array channels)]
     (reify
@@ -168,7 +168,7 @@
       (amplitude [s t c]
         (if (or (p/< t 0.0) (p/< decoded-length-seconds t))
           0
-          (let [frame-at-t (-> t (p/* frames-per-second) long)]
+          (let [frame-at-t ^long (-> t (p/* frames-per-second) long)]
             ;; Desired frame is before current buffer. Reset everything
             ;; to the start state
             (let [effective-start-of-buffer (.-start buffer-pos)]
@@ -209,7 +209,7 @@
             ;; cannot be found
             (if (and (p/<= (.-start buffer-pos) frame-at-t)
                      (p/<= frame-at-t (.-end buffer-pos)))
-              (let [buffer-frame-offset (- frame-at-t (.-start buffer-pos))
+              (let [buffer-frame-offset (p/- frame-at-t (.-start buffer-pos))
                     buffer-byte-offset (p/* buffer-frame-offset bytes-per-frame)]
                 (.position bb 0)
                 (.put bb buffer buffer-byte-offset bytes-per-frame)
@@ -233,7 +233,7 @@
   "Uses `channel-map` (a map of source channel numbers to destination
   channel numbers) to return a sound where the channels have been so
   remapped."
-  [s channel-map]
+  ^ISound [^ISound s channel-map]
   (sound (duration s)
          (fn multiplex-fn ^double [^double t ^long c] (sample s t (get channel-map c)))
          (count (keys channel-map))))
@@ -244,12 +244,13 @@
   sound, returns it. If given two single-channel sounds, returns a
   sound with the first sound on channel 0 and the second sound on
   channel 1."
-  ([s] (case (long (channels s))
-         1 (multiplex s {0 0, 1 0})
-         2 s
-         (throw (ex-info "Can't stereoize sounds with other than one or two channels"
-                         {:reason :cant-stereoize-channels :s s}))))
-  ([l r]
+  (^ISound [^ISound s]
+           (case (long (channels s))
+             1 (multiplex s {0 0, 1 0})
+             2 s
+             (throw (ex-info "Can't stereoize sounds with other than one or two channels"
+                             {:reason :cant-stereoize-channels :s s}))))
+  (^ISound [^ISound l ^ISound r]
      (when-not (= 1 (channels l) (channels r))
        (throw (ex-info "Can't steroize two sounds unless they are both single-channel"
                        {:reason :cant-stereoize-channels
@@ -263,7 +264,7 @@
             2)))
 
 (defn multiply
-  [s1 s2]
+  ^ISound [^ISound s1 ^ISound s2]
   "Multiplies two sounds together to produce a new one. Sounds must
   have the same number of channels."
   {:pre [(= (channels s1) (channels s2))]}
@@ -279,7 +280,7 @@
   both channels unchanged, 0.5 would result in both channels being the
   same (i.e. appearing to be mixed to stereo center), and 1.0 would
   switch the channels."
-  [s amount]
+  ^ISound [^ISound s ^double amount]
   {:pre [(= 2 (channels s))]}
   (let [amount-complement (- 1.0 amount)]
     (sound (duration s)
@@ -295,14 +296,14 @@
 
 (defn trim
   "Truncates `s` to the region between `start` and `end`."
-  [s start end]
+  [^ISound s ^double start ^double end]
   (sound (min (duration s) (- end start))
          (fn trim-fn ^double [^double t ^long c] (sample s (p/+ t start) c))
          (channels s)))
 
 (defn mix
   "Mixes files `s1` and `s2`."
-  [s1 s2]
+  ^ISound [^ISound s1 ^ISound s2]
   {:pre [(= (channels s1) (channels s2))]}
   (sound (max (duration s1) (duration s2))
          (fn mix-fn ^double [^double t ^long c]
@@ -311,7 +312,7 @@
 
 (defn append
   "Concatenates sounds together."
-  [s1 s2]
+  ^ISound [^ISound s1 ^ISound s2]
   {:pre [(= (channels s1) (channels s2))]}
   (let [d1 (duration s1)
         d2 (duration s2)]
@@ -324,14 +325,14 @@
 
 (defn timeshift
   "Inserts `amount` seconds of silence at the beginning of `s`"
-  [s amount]
+  ^ISound [^ISound s ^double amount]
   (append (silence amount (channels s)) s))
 
 (defn channel-dup
   "Returns a sound that duplicates channel `n` (default 0) of `s2` on
   the same number of channels `s1` has"
-  ([s1 s2] (channel-dup s1 s2 0))
-  ([s1 s2 n]
+  (^ISound [^ISound s1 ^ISound s2] (channel-dup s1 s2 0))
+  (^ISound [^ISound s1 ^ISound s2 ^long n]
      (sound (duration s2)
             (fn channel-dup-fn ^double [^double t ^long c]
               (sample s2 t n))
@@ -340,7 +341,7 @@
 (defn fade-in
   "Fades `s` linearly from zero at the beginning to full volume at
   `duration`."
-  [^ISound s ^double fade-duration]
+  ^ISound [^ISound s ^double fade-duration]
   (multiply s (channel-dup
                s
                (append (linear fade-duration 0 1.0)
@@ -348,7 +349,7 @@
 
 (defn fade-out
   "Fades the s to zero for the last `duration`."
-  [s fade-duration]
+  ^ISound [^ISound s ^double fade-duration]
   (multiply s (channel-dup
                s
                (append (linear (- (duration s) fade-duration) 1.0 1.0)
@@ -368,7 +369,7 @@
   would produce a sound whose amplitude starts at 1.0, linearly
   changes to 0.0 at time 30, stays at 0 for 10 seconds, then ramps up
   to its final value of 1.0 over 0.5 seconds"
-  [& spec]
+  ^ISound [& spec]
   {:pre [(and (odd? (count spec))
               (< 3 (count spec)))]}
   (->> spec
@@ -378,7 +379,7 @@
 
 (defn gain
   "Returns a sound that is `s` scaled by `g`."
-  [^ISound s ^double g]
+  ^ISound [^ISound s ^double g]
   (sound (duration s)
          (fn gain-fn ^double [^double t ^long c]
            (p/* g (sample s t c)))
@@ -386,21 +387,23 @@
 
 ;;; Playback
 
-(defn short-sample
+(defmacro shortify
   "Takes a floating-point number f in the range [-1.0, 1.0] and scales
   it to the range of a 16-bit integer. Clamps any overflows."
   [f]
-  (let [f* (-> f (min 1.0) (max -1.0))]
-    (short (p/* Short/MAX_VALUE f*))))
+  (let [max-short-as-double (double Short/MAX_VALUE)]
+    `(let [clamped# (-> ~f (min 1.0) (max -1.0))]
+       (short (p/* ~max-short-as-double clamped#)))))
 
 (defn- sample-provider
   "Returns a future that pushes byte arrays onto the
   LinkedBlockingQueue `q` for the sound `s`."
-  [s ^LinkedBlockingQueue q sample-rate]
+  [^ISound s ^LinkedBlockingQueue q ^long sample-rate]
   (let [channels     (channels s)
         buffer-bytes (p/* sample-rate channels) ;; Half-second
         bb           (java.nio.ByteBuffer/allocate buffer-bytes)
-        total-bytes  (-> s duration (p/* sample-rate) long (p/* channels 2))
+        total-frames (-> s duration (p/* (double sample-rate)) long)
+        total-bytes  (p/* 2 total-frames channels)
         byte->t      (fn ^double [^long n] (-> n double (/ sample-rate channels 2)))]
    (future
      (loop [current-byte 0]
@@ -410,11 +413,11 @@
                buffer (byte-array bytes-to-write)]
            (.position bb 0)
            (doseq [i (range 0 bytes-to-write (p/* 2 channels))]
-             (let [t  (byte->t (p/+ current-byte i))]
+             (let [t  (byte->t (p/+ current-byte (long i)))]
                ;;(println t frame)
                (dotimes [c channels]
                  (let [samp (oversample4 s t c (/ 1.0 sample-rate 4.0))]
-                   (.putShort bb (short-sample samp))))))
+                   (.putShort bb (shortify samp))))))
            (.position bb 0)
            (.get bb buffer)
            ;; Bail if the player gets too far behind
@@ -427,7 +430,7 @@
 (defn play
   "Plays `sound` asynchronously. Returns a value that can be passed to
   `stop`."
-  [s]
+  [^ISound s]
   (let [sample-rate 44100
         channels    (channels s)
         sdl         (AudioSystem/getSourceDataLine (AudioFormat. sample-rate
@@ -439,7 +442,7 @@
         q           (LinkedBlockingQueue. 10)
         provider    (sample-provider s q sample-rate)]
     {:player   (future (.open sdl)
-                       (loop [buf (.take q)]
+                       (loop [buf ^bytes (.take q)]
                          (when-not (or @stopped (= buf ::eof))
                            (.write sdl buf 0 (alength buf))
                            (.start sdl) ;; Doesn't hurt to do it more than once
@@ -461,19 +464,19 @@
 
 (defn- sampled-input-stream
   "Returns an implementation of `InputStream` over `s`."
-  [s sample-rate]
+  [^ISound s ^long sample-rate]
   (let [bits-per-sample   16
         ;;marked-position  (atom nil)
-        current-t         (atom 0)
+        current-t         (MutableDouble. 0.0)
         dur               (duration s)
         total-frames      (-> dur (* sample-rate) long)
         channels          (channels s)
-        bytes-per-sample  (/ bits-per-sample 8)
+        bytes-per-sample  (long (/ bits-per-sample 8))
         bytes-per-frame   (p/* channels bytes-per-sample)
         total-bytes       (p/* total-frames bytes-per-frame)
         seconds-per-frame (/ 1.0 sample-rate)]
     (proxy [java.io.InputStream] []
-      (available [] (- total-bytes (-> dur (- @current-t) (p/* sample-rate bytes-per-frame))))
+      (available [] (- total-bytes (-> dur (- (.-value current-t)) (p/* sample-rate bytes-per-frame))))
       (close [])
       (mark [readLimit] (throw (UnsupportedOperationException.)))
       (markSupported [] false)
@@ -481,34 +484,36 @@
         ([] (throw (ex-info "Not implemented" {:reason :not-implemented})))
         ([^bytes buf] (read this buf 0 (alength buf)))
         ([^bytes buf off len]
-           (if (p/< dur @current-t)
+           (if (p/< dur (.-value current-t))
              -1
-             (let [start-t (double @current-t)
+             (let [start-t (.-value current-t)
                    seconds-remaining (- dur start-t)
                    buffer-seconds (/ (double len) bytes-per-frame sample-rate)
                    seconds-to-read (min buffer-seconds seconds-remaining)
                    bytes-to-read (-> seconds-to-read (p/* sample-rate bytes-per-frame) long)
-                   bb (java.nio.ByteBuffer/allocate bytes-to-read)]
-               (if-not (pos? bytes-to-read)
+                   bb (java.nio.ByteBuffer/allocate bytes-to-read)
+                   frames-to-read (long (/ bytes-to-read bytes-per-frame))]
+               (if-not (pos? frames-to-read)
                  -1
-                 (dotimes [i (long (/ bytes-to-read bytes-per-frame))]
-                   (let [t (p/+ start-t (p/* i seconds-per-frame))]
+                 (dotimes [i frames-to-read]
+                   (let [t (p/+ start-t (p/* (double i) seconds-per-frame))]
                      (dotimes [c channels]
                        (let [ ;; Oversample to smooth out some of the
                              ;; time-jitter that I think is introducing
                              ;; artifacts into the output a bit.
                              samp (oversample4 s t c (/ 1.0 sample-rate 4.0))]
-                         (.putShort bb (short-sample samp)))))))
+                         (.putShort bb (shortify samp)))))))
                (.position bb 0)
-               (.get bb buf off len)
-               (swap! current-t + seconds-to-read)
+               (.get bb buf off (p/* frames-to-read bytes-per-frame))
+               (set! (. current-t value) (+ (.-value current-t) seconds-to-read))
                bytes-to-read))))
       (reset [] (throw (UnsupportedOperationException.)))
-      (skip [n] (swap! current-t + (/ (double n) bytes-per-frame sample-rate))))))
+      (skip [n] (set! (.  current-t value) (+ (.-value current-t)
+                                              (/ (double n) bytes-per-frame sample-rate)))))))
 
 (defn save
   "Save sound `s` to `path` as a 16-bit WAV with `sample-rate`."
-  [s path sample-rate]
+  [^ISound s ^String path ^long sample-rate]
   (AudioSystem/write (AudioInputStream.
                       (sampled-input-stream s sample-rate)
                       (AudioFormat. sample-rate 16 (channels s) true true)
@@ -521,8 +526,8 @@
 
 (defn visualize
   "Visualizes `s` by plottig it on a graph."
-  ([s] (visualize s 0))
-  ([s c]
+  ([^ISound s] (visualize s 0))
+  ([^ISound s ^long c]
      (let [duration (duration s)]
        ;; TODO: Maybe use a function that shows power in a window
        ;; around time t rather than just the sample

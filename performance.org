@@ -1096,6 +1096,29 @@ java.lang.Class.forName, seemingly from within sample. Hmm.
   (let [inc-t (/ 1.0 44100)
         delta-t (/ inc-t 4)
         s (sinusoid 600 440)
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 1278.849554 msecs"
+: ;;=> nil
+
+Wah! That certainly helped.
+
+** Now back to the previous examples
+
+Previous results:
+"Elapsed time: 819.078953 msecs"
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
         max-t 10.0]
     (time
      (loop [t 0.0]
@@ -1105,15 +1128,57 @@ java.lang.Class.forName, seemingly from within sample. Hmm.
 #+end_src
 
 #+RESULTS:
-: ;; "Elapsed time: 216.986519 msecs"
+: ;; "Elapsed time: 19472.126211 msecs"
+: ;;=> nil
+
+Back to slower than real time.
+
+** After many, many more type hints and reflection removal
+
+Previous results:
+: ;; "Elapsed time: 1278.849554 msecs"
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (sinusoid 600 440)
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 758.755775 msecs"
 : ;;=> nil
 
 Wah! That certainly helped.
 
+** Same thing against a file-based sound
 
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (read-sound "sin.wav")
+        max-t 60.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
 
+#+RESULTS:
+: ;; "Elapsed time: 367.715828 msecs"
+: ;;=> nil
 
-** A simple combination of operations, baseline
+Woot!
+
+* Experiments, round 3
+
+** TODO A simple combination of operations, baseline
 
 #+begin_src clojure
   (let [path (str  "test" dur ".wav")
@@ -1136,6 +1201,4 @@ Wah! That certainly helped.
         ))
 #+end_src
 
-#+RESULTS:
-: ;;=> 
-
+Haven't done this one yet.

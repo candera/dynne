@@ -5,7 +5,7 @@
             [clojure.pprint :refer [pprint]]
             [clojure.repl :refer [doc pst]]
             [clojure.tools.namespace.repl :refer [refresh]]
-            [dynne.sound :refer :all]
+            ;;[dynne.sound :refer :all]
             )
   (:import [javax.sound.sampled
             AudioFileFormat$Type
@@ -13,6 +13,10 @@
             AudioFormat$Encoding
             AudioInputStream
             AudioSystem]))
+
+;; Debugging support
+(alter-var-root #'*compiler-options* assoc :disable-locals-clearing true)
+(require '[dynne.sound :refer :all])
 
 (defn init
   [])
