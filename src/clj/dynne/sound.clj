@@ -2,7 +2,8 @@
   "Functions for working with sounds"
   (:require [clojure.java.io :as io]
             [incanter.core :as incanter]
-            [incanter.charts :as charts])
+            [incanter.charts :as charts]
+            [primitive-math :as p])
   (:import [javax.sound.sampled
             AudioFileFormat$Type
             AudioFormat
@@ -10,7 +11,8 @@
             AudioInputStream
             AudioSystem
             Clip]
-           [dynne.sound.impl ISound]))
+           [dynne.sound.impl ISound]
+           [java.util.concurrent LinkedBlockingQueue]))
 
 ;; We reserve the right to do something other than fall through to the
 ;; implementation, so we park some wrapper functions in this namespace.
@@ -30,7 +32,7 @@
   if `t` falls outside the sound's range. Call this in preference to
   using the sound's `amplitude` implementation."
   ^double [^ISound s t c]
-  (if (or (< t 0.0) (< (.duration s) t))
+  (if (or (p/< t 0.0) (p/< (.duration s) t))
     0.0
     (.amplitude s t c)))
 
@@ -42,9 +44,9 @@
   ^double [^ISound s t c delta-t]
   (loop [acc 0.0
          i 0]
-    (if (< i 4)
-      (recur (+ acc (sample s (+ t (* delta-t (double i))) c))
-             (+ i 1))
+    (if (p/< i 4)
+      (recur (p/+ acc (sample s (+ t (p/* delta-t (double i))) c))
+             (p/+ i 1))
       (/ acc 4.0))))
 
 ;;; Sound construction
@@ -77,7 +79,7 @@
   [duration ^double frequency]
   (sound duration
          (fn [^double t]
-           (Math/sin (* t frequency 2.0 Math/PI)))))
+           (Math/sin (p/* t frequency 2.0 Math/PI)))))
 
 (defn square-wave
   "Produces a single-channel sound that toggles between 1.0 and -1.0
@@ -85,7 +87,7 @@
   [duration freq]
   (sound duration
          (fn [t]
-           (let [x (-> t (* freq 2.0) long)]
+           (let [x (-> t (p/* freq 2.0) long)]
              (if (even? x) 1.0 -1.0)))))
 
 (defn linear
@@ -95,7 +97,7 @@
   (let [span (double (- end start))]
     (sound duration
            (fn [^double t]
-             (+ start (* span (/ t duration)))))))
+             (p/+ start (p/* span (/ t duration)))))))
 
 (defn silence
   "Creates a `n`-channel (default 1) sound that is `duration` long but silent."
@@ -110,7 +112,7 @@
   [^AudioInputStream ais n]
   (let [bytes-per-frame (-> ais .getFormat .getFrameSize)
         discard-frame-max 1000
-        discard-buffer-bytes (* bytes-per-frame discard-frame-max)
+        discard-buffer-bytes (p/* bytes-per-frame discard-frame-max)
         discard-buffer (byte-array discard-buffer-bytes)]
     (loop [total-frames-read (long 0)]
       (let [frames-left-to-read (- n total-frames-read)]
@@ -120,7 +122,7 @@
                 bytes-read (.read ais discard-buffer (int 0) (int bytes-to-read))]
             (if (neg? bytes-read)
               total-frames-read
-              (recur (+ total-frames-read (long (/ bytes-read bytes-per-frame))))))
+              (recur (p/+ total-frames-read (long (/ bytes-read bytes-per-frame))))))
           total-frames-read)))))
 
 (defn read-sound
@@ -152,7 +154,7 @@
                                  (/ (.getFrameLength ^AudioInputStream @din)
                                     frames-per-second))
         buffer-seconds         10
-        buffer                 (byte-array (* frames-per-second
+        buffer                 (byte-array (p/* frames-per-second
                                               buffer-seconds
                                               channels
                                               bytes-per-sample))
@@ -164,13 +166,13 @@
       (channels [s] channels)
       (duration [s] decoded-length-seconds)
       (amplitude [s t c]
-        (if (or (< t 0.0) (< decoded-length-seconds t))
+        (if (or (p/< t 0.0) (p/< decoded-length-seconds t))
           0
-          (let [frame-at-t (-> t (* frames-per-second) long)]
+          (let [frame-at-t (-> t (p/* frames-per-second) long)]
             ;; Desired frame is before current buffer. Reset everything
             ;; to the start state
             (let [effective-start-of-buffer (.-start buffer-pos)]
-              (when (< frame-at-t effective-start-of-buffer)
+              (when (p/< frame-at-t effective-start-of-buffer)
                 ;;(println "rewinding")
                 (.close ^AudioInputStream @din)
                 (.close ^AudioInputStream @in)
@@ -182,7 +184,7 @@
             ;; Desired position is past the end of the buffered region.
             ;; Update buffer to include it.
             (let [effective-end-of-buffer (.-end buffer-pos)]
-              (when (< effective-end-of-buffer frame-at-t)
+              (when (p/< effective-end-of-buffer frame-at-t)
                 (let [frames-to-advance (- frame-at-t effective-end-of-buffer 1)]
                   ;; We can't skip, because there's state built up during .read
                   ;; (println "Advancing to frame" frame-at-t
@@ -192,9 +194,9 @@
                     (let [bytes-read (.read ^AudioInputStream @din buffer)]
                       (if (pos? bytes-read)
                         (let [frames-read (/ bytes-read bytes-per-frame)
-                              new-start-frame (+ (.-end buffer-pos) frames-advanced)]
+                              new-start-frame (p/+ (.-end buffer-pos) frames-advanced)]
                           (set! (. buffer-pos start) new-start-frame)
-                          (set! (. buffer-pos end) (+ new-start-frame frames-read -1)))
+                          (set! (. buffer-pos end) (p/+ new-start-frame frames-read -1)))
                         (do
                           ;; We're at EOF, so just pretend we're right
                           ;; before where they asked for, so we don't
@@ -205,13 +207,13 @@
 
             ;; Now we're either positioned or the requested position
             ;; cannot be found
-            (if (and (<= (.-start buffer-pos) frame-at-t)
-                     (<= frame-at-t (.-end buffer-pos)))
+            (if (and (p/<= (.-start buffer-pos) frame-at-t)
+                     (p/<= frame-at-t (.-end buffer-pos)))
               (let [buffer-frame-offset (- frame-at-t (.-start buffer-pos))
-                    buffer-byte-offset (* buffer-frame-offset bytes-per-frame)]
+                    buffer-byte-offset (p/* buffer-frame-offset bytes-per-frame)]
                 (.position bb 0)
                 (.put bb buffer buffer-byte-offset bytes-per-frame)
-                (.position bb (* c bytes-per-sample))
+                (.position bb (p/* c bytes-per-sample))
                 ;; TODO: We're hardcoded to .getShort here, but the
                 ;; bits-per-frame is a parameter. Should probably have
                 ;; something that knows how to read from a ByteBuffer
@@ -233,7 +235,7 @@
   remapped."
   [s channel-map]
   (sound (duration s)
-         (fn multiplex-fn [t c] (sample s t (get channel-map c)))
+         (fn multiplex-fn ^double [^double t ^long c] (sample s t (get channel-map c)))
          (count (keys channel-map))))
 
 (defn ->stereo
@@ -254,7 +256,7 @@
                         :l-channels (channels l)
                         :r-channels (channels r)})))
      (sound (min (duration l) (duration r))
-            (fn stereo-fn [^double t ^long c]
+            (fn stereo-fn ^double [^double t ^long c]
               (case c
                 0 (sample l t 0)
                 1 (sample r t 1)))
@@ -266,7 +268,7 @@
   have the same number of channels."
   {:pre [(= (channels s1) (channels s2))]}
   (sound (min (duration s1) (duration s2))
-         (fn multiply-fn [^double t ^long c] (* (sample s1 t c) (sample s2 t c)))
+         (fn multiply-fn ^double [^double t ^long c] (p/* (sample s1 t c) (sample s2 t c)))
          (channels s1)))
 
 (defn pan
@@ -281,21 +283,21 @@
   {:pre [(= 2 (channels s))]}
   (let [amount-complement (- 1.0 amount)]
     (sound (duration s)
-           (fn pan-fn [^double t ^long c]
+           (fn pan-fn ^double [^double t ^long c]
              (let [s0 (sample s t 0)
                    s1 (sample s t 1)]
                (case c
-                 0 (+ (* s0 amount-complement)
-                      (* s1 amount))
-                 1 (+ (* s0 amount)
-                      (* s1 amount-complement)))))
+                 0 (p/+ (p/* s0 amount-complement)
+                        (p/* s1 amount))
+                 1 (p/+ (p/* s0 amount)
+                        (p/* s1 amount-complement)))))
            2)))
 
 (defn trim
   "Truncates `s` to the region between `start` and `end`."
   [s start end]
   (sound (min (duration s) (- end start))
-         (fn trim-fn ^double [^double t c] (sample s (+ t start) c))
+         (fn trim-fn ^double [^double t ^long c] (sample s (p/+ t start) c))
          (channels s)))
 
 (defn mix
@@ -303,8 +305,8 @@
   [s1 s2]
   {:pre [(= (channels s1) (channels s2))]}
   (sound (max (duration s1) (duration s2))
-         (fn mix-fn [t c]
-           (+ (sample s1 t c) (sample s2 t c)))
+         (fn mix-fn ^double [^double t ^long c]
+           (p/+ (sample s1 t c) (sample s2 t c)))
          (channels s1)))
 
 (defn append
@@ -313,9 +315,9 @@
   {:pre [(= (channels s1) (channels s2))]}
   (let [d1 (duration s1)
         d2 (duration s2)]
-    (sound (+ d1 d2)
+    (sound (p/+ d1 d2)
            (fn append-fn ^double [^double t ^long c]
-             (if (<= t d1)
+             (if (p/<= t d1)
                (sample s1 t c)
                (sample s2 (- t d1) c)))
            (channels s1))))
@@ -379,7 +381,7 @@
   [^ISound s ^double g]
   (sound (duration s)
          (fn gain-fn ^double [^double t ^long c]
-           (* g (sample s t c)))
+           (p/* g (sample s t c)))
          (channels s)))
 
 ;;; Playback
@@ -389,26 +391,26 @@
   it to the range of a 16-bit integer. Clamps any overflows."
   [f]
   (let [f* (-> f (min 1.0) (max -1.0))]
-    (short (* Short/MAX_VALUE f*))))
+    (short (p/* Short/MAX_VALUE f*))))
 
 (defn- sample-provider
   "Returns a future that pushes byte arrays onto the
   LinkedBlockingQueue `q` for the sound `s`."
-  [s q sample-rate]
+  [s ^LinkedBlockingQueue q sample-rate]
   (let [channels     (channels s)
-        buffer-bytes (* sample-rate channels) ;; Half-second
+        buffer-bytes (p/* sample-rate channels) ;; Half-second
         bb           (java.nio.ByteBuffer/allocate buffer-bytes)
-        total-bytes  (-> s duration (* sample-rate) long (* channels 2))
-        byte->t      (fn [n] (-> n double (/ sample-rate channels 2)))]
+        total-bytes  (-> s duration (p/* sample-rate) long (p/* channels 2))
+        byte->t      (fn ^double [^long n] (-> n double (/ sample-rate channels 2)))]
    (future
      (loop [current-byte 0]
-       (when (< current-byte total-bytes)
+       (when (p/< current-byte total-bytes)
          (let [bytes-remaining (- total-bytes current-byte)
                bytes-to-write (min bytes-remaining buffer-bytes)
                buffer (byte-array bytes-to-write)]
            (.position bb 0)
-           (doseq [i (range 0 bytes-to-write (* 2 channels))]
-             (let [t  (byte->t (+ current-byte i))]
+           (doseq [i (range 0 bytes-to-write (p/* 2 channels))]
+             (let [t  (byte->t (p/+ current-byte i))]
                ;;(println t frame)
                (dotimes [c channels]
                  (let [samp (oversample4 s t c (/ 1.0 sample-rate 4.0))]
@@ -434,7 +436,7 @@
                                                                  true
                                                                  true))
         stopped     (atom false)
-        q           (java.util.concurrent.LinkedBlockingQueue. 10)
+        q           (LinkedBlockingQueue. 10)
         provider    (sample-provider s q sample-rate)]
     {:player   (future (.open sdl)
                        (loop [buf (.take q)]
@@ -467,11 +469,11 @@
         total-frames      (-> dur (* sample-rate) long)
         channels          (channels s)
         bytes-per-sample  (/ bits-per-sample 8)
-        bytes-per-frame   (* channels bytes-per-sample)
-        total-bytes       (* total-frames bytes-per-frame)
+        bytes-per-frame   (p/* channels bytes-per-sample)
+        total-bytes       (p/* total-frames bytes-per-frame)
         seconds-per-frame (/ 1.0 sample-rate)]
     (proxy [java.io.InputStream] []
-      (available [] (- total-bytes (-> dur (- @current-t) (* sample-rate bytes-per-frame))))
+      (available [] (- total-bytes (-> dur (- @current-t) (p/* sample-rate bytes-per-frame))))
       (close [])
       (mark [readLimit] (throw (UnsupportedOperationException.)))
       (markSupported [] false)
@@ -479,18 +481,18 @@
         ([] (throw (ex-info "Not implemented" {:reason :not-implemented})))
         ([^bytes buf] (read this buf 0 (alength buf)))
         ([^bytes buf off len]
-           (if (< dur @current-t)
+           (if (p/< dur @current-t)
              -1
              (let [start-t (double @current-t)
                    seconds-remaining (- dur start-t)
                    buffer-seconds (/ (double len) bytes-per-frame sample-rate)
                    seconds-to-read (min buffer-seconds seconds-remaining)
-                   bytes-to-read (-> seconds-to-read (* sample-rate bytes-per-frame) long)
+                   bytes-to-read (-> seconds-to-read (p/* sample-rate bytes-per-frame) long)
                    bb (java.nio.ByteBuffer/allocate bytes-to-read)]
                (if-not (pos? bytes-to-read)
                  -1
                  (dotimes [i (long (/ bytes-to-read bytes-per-frame))]
-                   (let [t (+ start-t (* i seconds-per-frame))]
+                   (let [t (p/+ start-t (p/* i seconds-per-frame))]
                      (dotimes [c channels]
                        (let [ ;; Oversample to smooth out some of the
                              ;; time-jitter that I think is introducing
