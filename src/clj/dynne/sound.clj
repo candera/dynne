@@ -31,7 +31,7 @@
   "Returns a vector of amplitues from sound `s` at time `t`, or zero
   if `t` falls outside the sound's range. Call this in preference to
   using the sound's `amplitude` implementation."
-  ^double [^ISound s t c]
+  ^double [^ISound s ^double t ^long c]
   (if (or (p/< t 0.0) (p/< (.duration s) t))
     0.0
     (.amplitude s t c)))
@@ -41,7 +41,7 @@
 ;; about this.
 (defn oversample4
   "Returns the mean of sampling `s` on channel `c` 4 steps of `delta-t` around `t`."
-  ^double [^ISound s t c delta-t]
+  ^double [^ISound s ^double t ^long c ^double delta-t]
   (loop [acc 0.0
          i 0]
     (if (p/< i 4)
@@ -78,7 +78,7 @@
   "Returns a single-channel sound of `duration` and `frequency`."
   [duration ^double frequency]
   (sound duration
-         (fn [^double t]
+         (fn sinusoid-fn ^double [^double t]
            (Math/sin (p/* t frequency 2.0 Math/PI)))))
 
 (defn square-wave
@@ -86,7 +86,7 @@
   at frequency `freq`."
   [duration freq]
   (sound duration
-         (fn [t]
+         (fn square-wav-fn ^double [^double t]
            (let [x (-> t (p/* freq 2.0) long)]
              (if (even? x) 1.0 -1.0)))))
 
@@ -96,7 +96,7 @@
   [^double duration ^double start ^double end]
   (let [span (double (- end start))]
     (sound duration
-           (fn [^double t]
+           (fn linear-fn ^double [^double t]
              (p/+ start (p/* span (/ t duration)))))))
 
 (defn silence
