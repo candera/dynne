@@ -1008,6 +1008,110 @@ the benchmarking code, not in the dynne code itself. Maybe I should
 try this on a different OS.
 
 
+** Again with 10a0cc1a967f76f7f889ac1ce3e503fe7139ef1f, on Ubuntu
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (sinusoid 600 440)
+        max-t 600.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+
+None, because it ran so long I killed it. Going to reboot and see if
+that helps.
+
+** Again with 10a0cc1a967f76f7f889ac1ce3e503fe7139ef1f, on Windows after a reboot
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (sinusoid 600 440)
+        max-t 1.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 2949.670842 msecs"
+: ;;=> nil
+
+Holy crap, we're actually slower than real-time. Profiler time!
+
+** Again with 10a0cc1a967f76f7f889ac1ce3e503fe7139ef1f, on Windows after a reboot
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (sinusoid 600 440)
+        max-t 1.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 2949.670842 msecs"
+: ;;=> nil
+
+Still slower than real-time
+
+** Again with 10a0cc1a967f76f7f889ac1ce3e503fe7139ef1f, disabling debugging
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (sinusoid 600 440)
+        max-t 10.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 27786.238717 msecs"
+: ;;=> nil
+
+Still incredibly slow. Profiler says it's
+java.lang.reflect.getParameterTypes, followed by
+java.lang.Class.forName, seemingly from within sample. Hmm.
+
+
+** After adding more type hints to sample, oversample4, and a few other things
+
+#+begin_src clojure
+  (let [inc-t (/ 1.0 44100)
+        delta-t (/ inc-t 4)
+        s (sinusoid 600 440)
+        max-t 10.0]
+    (time
+     (loop [t 0.0]
+       (when (< t max-t)
+         (oversample4 s t 0 delta-t)
+         (recur (+ t inc-t))))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 216.986519 msecs"
+: ;;=> nil
+
+Wah! That certainly helped.
+
+
+
 
 ** A simple combination of operations, baseline
 
