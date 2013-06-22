@@ -53,15 +53,14 @@
         delta-t (/ inc-t 4)
         max-t (duration s)
         channels (channels s)]
-    (time
-     (loop [t 0.0]
-       (when (< t max-t)
-         (loop [c 0]
-           ;;(sample s t)
-           (when (< c channels)
-             (oversample4 s t c delta-t)
-             (recur (+ 1 c))))
-         (recur (+ t inc-t)))))))
+    (loop [t 0.0]
+      (when (< t max-t)
+        (loop [c 0]
+          ;;(sample s t)
+          (when (< c channels)
+            (oversample4 s t c delta-t)
+            (recur (+ 1 c))))
+        (recur (+ t inc-t))))))
 
 (defn bench
   [dur]
