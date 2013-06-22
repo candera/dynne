@@ -112,6 +112,16 @@ I was having a lot of fun.
 In short: if Overtone does anything like this, you should use it. It
 is likely to be much, much better than dynne.
 
+## Appreciations
+
+Thanks to [Stuart Sierra](https://github.com/stuartsierra) for helping
+me with some of the weirder problems I hit, especially around compiler
+errors.
+
+Thanks to [Zach Tellman](https://github.com/ztellman) for his
+[primitive-math](https://github.com/ztellman/primitive-math) library,
+which was helpful in finding sub-optimal usages of numeric operations.
+
 ## License
 
 Copyright © 2013 Craig Andera
