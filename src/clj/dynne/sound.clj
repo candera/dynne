@@ -27,14 +27,17 @@
   ^double [^ISound s]
   `(.duration ~s))
 
-(defn sample
+(defmacro sample
   "Returns a vector of amplitues from sound `s` at time `t`, or zero
   if `t` falls outside the sound's range. Call this in preference to
   using the sound's `amplitude` implementation."
-  ^double [^ISound s ^double t ^long c]
-  (if (or (p/< t 0.0) (p/< (.duration s) t))
-    0.0
-    (.amplitude s t c)))
+  [s t c]
+  `(let [s# ^ISound ~s
+         t# ^double ~t
+         c# ^long ~c]
+     (if (or (p/< t# 0.0) (p/< (.duration s#) t#))
+       0.0
+       (.amplitude s# t# c#))))
 
 ;; n is fixed at four because we can't have functions that take
 ;; primitives with more than four arguments. TODO: Maybe do something
