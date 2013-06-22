@@ -1178,11 +1178,11 @@ Woot!
 
 * Experiments, round 3
 
-** TODO A simple combination of operations, baseline
+** DONE A simple combination of operations, baseline
 
 #+begin_src clojure
-  (let [path (str  "test" dur ".wav")
-        dur 60]
+  (let [dur 60
+        path (str  "test" dur ".wav")]
     (when-not (.exists (io/file path))
       (save (->stereo (sinusoid dur 440)) path 44100))
     (-> path
@@ -1201,4 +1201,38 @@ Woot!
         ))
 #+end_src
 
-Haven't done this one yet.
+#+RESULTS:
+: ;; "Elapsed time: 9683.257536 msecs"
+: ;;=> nil
+
+Meh. OK at 6.1x realtime. Hope to do better.
+
+** A simple combination of operations, baseline, without lein deoptimization
+
+#+begin_src clojure
+  (let [dur 60
+        path (str  "test" dur ".wav")]
+    (when-not (.exists (io/file path))
+      (save (->stereo (sinusoid dur 440)) path 44100))
+    (-> path
+        read-sound
+        ;;(sinusoid dur 440)
+        ->stereo
+        (fade-in 20)
+        (fade-out 20)
+        (mix (-> (square-wave 60 880)
+                 (timeshift (/ dur 2))
+                 (->stereo)))
+        ;;(visualize)
+        ;;(save (str "test-out" dur ".wav") 44100)
+        oversample-all
+        time
+        ))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 8622.443963 msecs"
+: ;;=> nil
+
+Significantly better: 6.9x realtime. Still not great.
+
