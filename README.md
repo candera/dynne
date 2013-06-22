@@ -15,7 +15,7 @@ Available on [Clojars](https://clojars.org/org.craigandera/dynne). Put
 this in your `project.clj`:
 
 ```
-[org.craigandera/dynne "0.1.0"]
+[org.craigandera/dynne "0.2.0"]
 ```
 
 ## Concepts
