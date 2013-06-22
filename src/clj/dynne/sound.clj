@@ -51,7 +51,7 @@
 
 ;;; Sound construction
 
-(defn sound
+(defn ^ISound sound
   "Creates a sound `duration` seconds long where the amplitudes are
   produced by `f`. If `c`, the number of channels is not provided, it
   is assumed to be one, and `f` should accept only a single argument
@@ -69,9 +69,9 @@
        (duration [this] duration)
        (amplitude [this t c] (f t c)))))
 
-(defn null-sound
+(defn ^ISound null-sound
   "Returns a zero-duration sound with one channel."
-  ^ISound []
+  []
   (sound 0.0 (constantly 0.0)))
 
 (defn ^ISound sinusoid
@@ -81,28 +81,28 @@
          (fn sinusoid-fn ^double [^double t]
            (Math/sin (p/* t frequency 2.0 Math/PI)))))
 
-(defn square-wave
+(defn ^ISound square-wave
   "Produces a single-channel sound that toggles between 1.0 and -1.0
   at frequency `freq`."
-  ^ISound [^double duration ^double freq]
+  [^double duration ^double freq]
   (sound duration
          (fn square-wav-fn ^double [^double t]
            (let [x (-> t (p/* freq 2.0) long)]
              (if (even? x) 1.0 -1.0)))))
 
-(defn linear
+(defn ^ISound linear
   "Produces a single-channel sound whose samples move linearly
   from `start` to `end` over `duration`."
-  ^ISound [^double duration ^double start ^double end]
+  [^double duration ^double start ^double end]
   (let [span (double (- end start))]
     (sound duration
            (fn linear-fn ^double [^double t]
              (p/+ start (p/* span (/ t duration)))))))
 
-(defn silence
+(defn ^ISound silence
   "Creates a `n`-channel (default 1) sound that is `duration` long but silent."
-  (^ISound [^double duration] (silence duration 1))
-  (^ISound [^double duration ^long n] (sound duration (constantly 0.0) n)))
+  ([^double duration] (silence duration 1))
+  ([^double duration ^long n] (sound duration (constantly 0.0) n)))
 
 ;;; File-based Sound
 
@@ -229,28 +229,28 @@
 
 ;;; Sound manipulation
 
-(defn multiplex
+(defn ^ISound multiplex
   "Uses `channel-map` (a map of source channel numbers to destination
   channel numbers) to return a sound where the channels have been so
   remapped."
-  ^ISound [^ISound s channel-map]
+  [^ISound s channel-map]
   (sound (duration s)
          (fn multiplex-fn ^double [^double t ^long c] (sample s t (get channel-map c)))
          (count (keys channel-map))))
 
-(defn ->stereo
+(defn ^ISound ->stereo
   "Creates a stereo sound. If given one single-channel sound,
   duplicates channel zero on two channels. If given a single stereo
   sound, returns it. If given two single-channel sounds, returns a
   sound with the first sound on channel 0 and the second sound on
   channel 1."
-  (^ISound [^ISound s]
+  ([^ISound s]
            (case (long (channels s))
              1 (multiplex s {0 0, 1 0})
              2 s
              (throw (ex-info "Can't stereoize sounds with other than one or two channels"
                              {:reason :cant-stereoize-channels :s s}))))
-  (^ISound [^ISound l ^ISound r]
+  ([^ISound l ^ISound r]
      (when-not (= 1 (channels l) (channels r))
        (throw (ex-info "Can't steroize two sounds unless they are both single-channel"
                        {:reason :cant-stereoize-channels
@@ -263,8 +263,8 @@
                 1 (sample r t 1)))
             2)))
 
-(defn multiply
-  ^ISound [^ISound s1 ^ISound s2]
+(defn ^ISound multiply
+  [^ISound s1 ^ISound s2]
   "Multiplies two sounds together to produce a new one. Sounds must
   have the same number of channels."
   {:pre [(= (channels s1) (channels s2))]}
@@ -272,7 +272,7 @@
          (fn multiply-fn ^double [^double t ^long c] (p/* (sample s1 t c) (sample s2 t c)))
          (channels s1)))
 
-(defn pan
+(defn ^ISound pan
   "Takes a two-channel sound and mixes the channels together by
   `amount`, a float on the range [0.0, 1.0]. The ususal use is to take
   a sound with separate left and right channels and combine them so
@@ -280,7 +280,7 @@
   both channels unchanged, 0.5 would result in both channels being the
   same (i.e. appearing to be mixed to stereo center), and 1.0 would
   switch the channels."
-  ^ISound [^ISound s ^double amount]
+  [^ISound s ^double amount]
   {:pre [(= 2 (channels s))]}
   (let [amount-complement (- 1.0 amount)]
     (sound (duration s)
@@ -294,25 +294,25 @@
                         (p/* s1 amount-complement)))))
            2)))
 
-(defn trim
+(defn ^ISound trim
   "Truncates `s` to the region between `start` and `end`."
   [^ISound s ^double start ^double end]
   (sound (min (duration s) (- end start))
          (fn trim-fn ^double [^double t ^long c] (sample s (p/+ t start) c))
          (channels s)))
 
-(defn mix
+(defn ^ISound mix
   "Mixes files `s1` and `s2`."
-  ^ISound [^ISound s1 ^ISound s2]
+  [^ISound s1 ^ISound s2]
   {:pre [(= (channels s1) (channels s2))]}
   (sound (max (duration s1) (duration s2))
          (fn mix-fn ^double [^double t ^long c]
            (p/+ (sample s1 t c) (sample s2 t c)))
          (channels s1)))
 
-(defn append
+(defn ^ISound append
   "Concatenates sounds together."
-  ^ISound [^ISound s1 ^ISound s2]
+  [^ISound s1 ^ISound s2]
   {:pre [(= (channels s1) (channels s2))]}
   (let [d1 (duration s1)
         d2 (duration s2)]
@@ -323,39 +323,39 @@
                (sample s2 (- t d1) c)))
            (channels s1))))
 
-(defn timeshift
+(defn ^ISound timeshift
   "Inserts `amount` seconds of silence at the beginning of `s`"
-  ^ISound [^ISound s ^double amount]
+  [^ISound s ^double amount]
   (append (silence amount (channels s)) s))
 
-(defn channel-dup
+(defn ^ISound channel-dup
   "Returns a sound that duplicates channel `n` (default 0) of `s2` on
   the same number of channels `s1` has"
-  (^ISound [^ISound s1 ^ISound s2] (channel-dup s1 s2 0))
-  (^ISound [^ISound s1 ^ISound s2 ^long n]
+  ([^ISound s1 ^ISound s2] (channel-dup s1 s2 0))
+  ([^ISound s1 ^ISound s2 ^long n]
      (sound (duration s2)
             (fn channel-dup-fn ^double [^double t ^long c]
               (sample s2 t n))
             (channels s1))))
 
-(defn fade-in
+(defn ^ISound fade-in
   "Fades `s` linearly from zero at the beginning to full volume at
   `duration`."
-  ^ISound [^ISound s ^double fade-duration]
+  [^ISound s ^double fade-duration]
   (multiply s (channel-dup
                s
                (append (linear fade-duration 0 1.0)
                        (linear (- (duration s) fade-duration) 1.0 1.0)))))
 
-(defn fade-out
+(defn ^ISound fade-out
   "Fades the s to zero for the last `duration`."
-  ^ISound [^ISound s ^double fade-duration]
+  [^ISound s ^double fade-duration]
   (multiply s (channel-dup
                s
                (append (linear (- (duration s) fade-duration) 1.0 1.0)
                        (linear fade-duration 1.0 0.0)))))
 
-(defn segmented-linear
+(defn ^ISound segmented-linear
   "Produces a single-channels sound whose amplitudes change linear as
   described by `spec`. Spec is a sequence of interleaved amplitudes
   and durations. For example the spec
@@ -369,7 +369,7 @@
   would produce a sound whose amplitude starts at 1.0, linearly
   changes to 0.0 at time 30, stays at 0 for 10 seconds, then ramps up
   to its final value of 1.0 over 0.5 seconds"
-  ^ISound [& spec]
+  [& spec]
   {:pre [(and (odd? (count spec))
               (< 3 (count spec)))]}
   (->> spec
@@ -377,9 +377,9 @@
        (map (fn [[start duration end]] (linear duration start end)))
        (reduce append)))
 
-(defn gain
+(defn ^ISound gain
   "Returns a sound that is `s` scaled by `g`."
-  ^ISound [^ISound s ^double g]
+  [^ISound s ^double g]
   (sound (duration s)
          (fn gain-fn ^double [^double t ^long c]
            (p/* g (sample s t c)))
@@ -458,7 +458,7 @@
 (defn stop
   "Stops playing the sound represented by `player` (returned from `play`)."
   [player]
-  (-> player :stop .invoke))
+  ((:stop player)))
 
 ;;; Serialization
 
