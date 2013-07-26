@@ -1293,10 +1293,67 @@ Previous results:
 #+end_src
 
 #+RESULTS:
-: ;; "Elapsed time: 3696.286356 msecs"
+: ;; "Elapsed time: 5508.543365 msecs"
+: ;;=> nil
 
 Yep, quite a bit better again: 16x realtime. And at this point I'm pretty much out
 of ideas for how to make it faster without changing the underlying
 metaphor of functional composition. Maybe something to talk to other
 people about.
+
+* Symbolic composition
+
+** Baseline
+
+#+begin_src clojure
+    (let [dur 60
+          s1 (sinusoid dur 440)
+          s2 (sinusoid dur 1234)]
+      (-> s1
+          (multiply s2)
+          (multiply s2)
+          (multiply s2)
+          (multiply s2)
+          (multiply s2)
+          (multiply s2)
+          (multiply s2)
+          oversample-all
+          time
+    ))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 6160.466973 msecs"
+: ;;=> nil
+
+
+** Symbolically
+
+#+begin_src clojure
+  (let [dur 60
+        s1 (sinusoid dur 440)
+        s2 (sinusoid dur 1234)
+        i1 (ops/input :s1)
+        i2 (ops/input :s2)
+        op (ops/compile
+            (-> i1
+                (ops/multiply i2)
+                (ops/multiply i2)
+                (ops/multiply i2)
+                (ops/multiply i2)
+                (ops/multiply i2)
+                (ops/multiply i2)
+                (ops/multiply i2)))]
+    (-> (op {:s1 s1 :s2 s2})
+        oversample-all
+        time
+  ))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 4734.177664 msecs"
+: ;;=> nil
+
+That's not bad. Maybe 25% better.
+
 
