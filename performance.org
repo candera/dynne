@@ -1357,3 +1357,59 @@ people about.
 That's not bad. Maybe 25% better.
 
 
+
+* Sampled representation
+
+** Helper functions
+
+#+begin_src clojure
+  (require '[hiphip.double :as dbl])
+  (require '[primitive-math :as p])
+
+  (defn mono-chunk-seq [chunk-size]
+    (repeat [(double-array chunk-size 1.0)]))
+
+  (defn stereo-chunk-seq [chunk-size]
+    (repeat [(double-array chunk-size 1.0) (double-array chunk-size 1.0)]))
+#+end_src
+
+#+RESULTS:
+: ;;=> #'user/stereo-chunk-seq
+
+
+** Baseline
+
+How fast can we simply iterate through a sequence of vectors of double
+arrays, just looking at each element without doing anything to it?
+
+#+begin_src clojure
+  (time
+   (let [chunk-size 44100
+         num-chunks (* 60 60)]
+     (doseq [[chunk] (take num-chunks (mono-chunk-seq chunk-size))]
+       (dotimes [n chunk-size]
+         (dbl/aget chunk n)))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 101.515957 msecs"
+: ;;=> nil
+
+Not bad! That's an hour's worth of samples at 44100, with a 1.0-second
+chunk size.
+
+** With a simple operation
+
+#+begin_src clojure
+  (time
+   (let [chunk-size 10000
+         num-chunks (->> chunk-size (/ 44100) (* 60 60 ))]
+     (doseq [[chunk-l chunk-r] (take num-chunks (stereo-chunk-seq chunk-size))]
+       (dbl/amap [l chunk-l r chunk-r] (p/+ l r)))))
+#+end_src
+
+#+RESULTS:
+: ;; "Elapsed time: 574.488702 msecs"
+: ;;=> nil
+
+OK, wow, that's pretty good. Let's go build something on this.

@@ -39,18 +39,26 @@
        0.0
        (.amplitude s# t# c#))))
 
-;; n is fixed at four because we can't have functions that take
-;; primitives with more than four arguments. TODO: Maybe do something
-;; about this.
-(defn oversample4
-  "Returns the mean of sampling `s` on channel `c` 4 steps of `delta-t` around `t`."
-  ^double [^ISound s ^double t ^long c ^double delta-t]
-  (loop [acc 0.0
-         i 0]
-    (if (p/< i 4)
-      (recur (p/+ acc (sample s (+ t (p/* delta-t (double i))) c))
-             (p/+ i 1))
-      (/ acc 4.0))))
+;; We're using a macro here because we can't have functions that take
+;; primitives with more than four arguments.
+(defmacro defoversampler
+  "Defines a function called `name` that oversamples an input sound by
+  a factor of `n`."
+  [name n]
+  `(defn ~name
+     ~(str "Returns the mean of sampling `s` on channel `c` "
+           n
+           " steps of `delta-t` around `t`.")
+    ^double [^ISound s# ^double t# ^long c# ^double delta-t#]
+    (loop [acc# 0.0
+           i# 0]
+      (if (p/< i# ~n)
+        (recur (p/+ acc# (sample s# (+ t# (p/* delta-t# (double i#))) c#))
+               (p/+ i# 1))
+        (/ acc# ~(double n))))))
+
+(defoversampler oversample2 2)
+(defoversampler oversample4 4)
 
 ;;; Sound construction
 
@@ -504,7 +512,7 @@
                        (let [ ;; Oversample to smooth out some of the
                              ;; time-jitter that I think is introducing
                              ;; artifacts into the output a bit.
-                             samp (oversample4 s t c (/ 1.0 sample-rate 4.0))]
+                             samp (oversample2 s t c (/ 1.0 sample-rate 4.0))]
                          (.putShort bb (shortify samp)))))))
                (.position bb 0)
                (.get bb buf off (p/* frames-to-read bytes-per-frame))
