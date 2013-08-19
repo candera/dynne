@@ -10,7 +10,8 @@
 
 ;; TODO: It feels like the channels and duration stuff are the real
 ;; core of the abstraction, and the way you get amplitudes is sort of
-;; orthogonal.
+;; orthogonal. Maybe there's another abstraction that can get pulled
+;; out here.
 
 (defprotocol SampledSound
   "Represents a sound as a sequence of vectors of Java double arrays."
@@ -162,29 +163,41 @@
                (drop-samples samples-to-drop)
                (take-samples samples-to-take)))))))
 
-;; TODO: Generalize this
+;; TODO: Generalize this, if it makes sense to do so. Which I'm
+;; guessing it will, for enveloping, although that has a different
+;; termination case.
 (defn- add-chunks
   "Returns a sequence of chunks whose contents are the corresponding
   elements of `chunks1` and `chunks2` added together."
   [chunks1 ^long offset1 chunks2 ^long offset2]
   (let [[head1 & more1] chunks1
-        [head2 & more2] chunks2
-        len1 (dbl/alength (first head1))
-        len2 (dbl/alength (first head2))])
-  (cond
-   (= (- len1 offset1) (- len2 offset2))
-   (lazy-seq
-    (cons
-     (map #(dbl/amake [i (- len1 offset1)]
-                      (p/+ (dbl/aget %1 (p/+ i offset1))
-                           (dbl/aget %2 (p/+ i offset2))))
-          chunk1
-          chunk2)
-     (add-chunks more1 more2))))
+        [head2 & more2] chunks2]
+    (cond
+     (and head1 head2)
+     (let [len1       (dbl/alength (first head1))
+           len2       (dbl/alength (first head2))
+           samples    (min (- len1 offset1) (- len2 offset2))
+           consumed1? (= len1 (+ samples offset1))
+           consumed2? (= len2 (+ samples offset2))]
+       (lazy-seq
+        (cons
+         (map #(dbl/amake [i samples]
+                          (p/+ (dbl/aget %1 (p/+ i offset1))
+                               (dbl/aget %2 (p/+ i offset2))))
+              head1
+              head2)
+         (add-chunks (if consumed1? more1 chunks1)
+                     (if consumed1? 0 (+ offset1 samples))
+                     (if consumed2? more2 chunks2)
+                     (if consumed2? 0 (+ offset2 samples))))))
 
-  ;; TODO: Finish this
+     (and head1 (not head2))
+     (cons (map #(dbl-asub offset1 (dbl/alength head1)) head1)
+           more1)
 
-)
+     (and (not head1) head2)
+     (cons (map #(dbl-asub offset2 (dbl/alength head2)) head2)
+           more2))))
 
 (defn mix
   "Mixes files `s1` and `s2` together."
@@ -196,13 +209,15 @@
       (duration [this] (max d1 d2))
       (channels [this] (channels s1))
       (chunks [this sample-rate]
-        (let [chunks1 (if (< d1 d2)
-                        (append (chunks s1 sample-rate) (constant (- d2 d1) 0.0))
-                        (chunks s1 sample-rate))
-              chunks2 (if (<= d1 d2)
-                        (chunks s2 sample-rate)
-                        (append (chunks s2 sample-rate) (constant (- d1 d2) 0.0)))]
-          (add-chunks chunks1 chunks2))))))
+        (let [s1* (if (< d1 d2)
+                    (append s1 (constant (- d2 d1) (channels s1) 0.0))
+                    s1)
+              s2* (if (<= d1 d2)
+                    s2
+                    (append (chunks s2 sample-rate)
+                            (constant (- d1 d2) (channels s2) 0.0)))]
+          (add-chunks (chunks s1* sample-rate) 0
+                      (chunks s2* sample-rate) 0))))))
 
 ;; TODO: gain
 
@@ -260,6 +275,8 @@
           (recur more (- n head-length) acc))
         acc))))
 
+;; TODO: There's definitely a protocol to be extracted here, assuming
+;; the continuous-time stuff lives on.
 (defn visualize
   "Visualizes channel `c` (default 0) of `s` by plotting it on a graph."
   ([s] (visualize s 0))
