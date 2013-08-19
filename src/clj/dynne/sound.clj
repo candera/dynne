@@ -19,13 +19,13 @@
 
 (defmacro channels
   "Return the number of channels in `s`."
-  ^long [^ISound s]
-  `(.channels ~s))
+  ^long [s]
+  `(.channels ^ISound ~s))
 
 (defmacro duration
   "Return the duration of `s` in seconds."
-  ^double [^ISound s]
-  `(.duration ~s))
+  ^double [s]
+  `(.duration ^ISound ~s))
 
 (defmacro sample
   "Returns a vector of amplitues from sound `s` at time `t`, or zero
@@ -534,7 +534,7 @@
      (let [duration (duration s)]
        ;; TODO: Maybe use a function that shows power in a window
        ;; around time t rather than just the sample
-       (incanter/view (charts/function-plot #(sample s % c)
+       (incanter/view (charts/function-plot #(sample s ^double % c)
                                             0.0
                                             duration
                                             :step-size (/ duration 4000.0))))))
