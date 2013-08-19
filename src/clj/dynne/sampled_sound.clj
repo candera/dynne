@@ -28,7 +28,7 @@
   returns a sound with `duration`, `channels` whose samples are
   determined by `expr`. Inside expr, the sample rate, the total number
   of samples, the current sample index, and the current channel number
-  will be bound to the four symbols in `bindings`"
+  will be bound to the four symbols in `bindings`."
   [name
    duration-param
    channels-param
@@ -162,6 +162,50 @@
                (drop-samples samples-to-drop)
                (take-samples samples-to-take)))))))
 
+;; TODO: Generalize this
+(defn- add-chunks
+  "Returns a sequence of chunks whose contents are the corresponding
+  elements of `chunks1` and `chunks2` added together."
+  [chunks1 ^long offset1 chunks2 ^long offset2]
+  (let [[head1 & more1] chunks1
+        [head2 & more2] chunks2
+        len1 (dbl/alength (first head1))
+        len2 (dbl/alength (first head2))])
+  (cond
+   (= (- len1 offset1) (- len2 offset2))
+   (lazy-seq
+    (cons
+     (map #(dbl/amake [i (- len1 offset1)]
+                      (p/+ (dbl/aget %1 (p/+ i offset1))
+                           (dbl/aget %2 (p/+ i offset2))))
+          chunk1
+          chunk2)
+     (add-chunks more1 more2))))
+
+  ;; TODO: Finish this
+
+)
+
+(defn mix
+  "Mixes files `s1` and `s2` together."
+  [s1 s2]
+  {:pre [(= (channels s1) (channels s2))]}
+  (let [d1 (duration s1)
+        d2 (duration s2)]
+    (reify SampledSound
+      (duration [this] (max d1 d2))
+      (channels [this] (channels s1))
+      (chunks [this sample-rate]
+        (let [chunks1 (if (< d1 d2)
+                        (append (chunks s1 sample-rate) (constant (- d2 d1) 0.0))
+                        (chunks s1 sample-rate))
+              chunks2 (if (<= d1 d2)
+                        (chunks s2 sample-rate)
+                        (append (chunks s2 sample-rate) (constant (- d1 d2) 0.0)))]
+          (add-chunks chunks1 chunks2))))))
+
+;; TODO: gain
+
 ;; TODO: maybe make these into functions that return operations rather
 ;; than sounds.
 
@@ -198,21 +242,6 @@
 ;;            [l r])))))
 
 ;; TODO: pan
-
-;; (defn trim
-;;   "Truncates `s` to the region between `start` and `end`."
-;;   [s ^double start ^double end]
-;;   (let [dur (min (duration s) (- end start))]
-;;     (reify SampledSound
-;;       (channels [this] (channels s))
-;;       (duration [this] dur)
-;;       (chunks [this chunk-size sample-rate]
-;;         (let [in-chunks (chunks chunk-size sample-rate)
-;;               start-index (long (* start sample-rate))]
-;;           (for [c (range (channels s))]
-;;             (java.util.Arrays/copyOfRange (nth amps c)
-;;                                           start-index
-;;                                           (+ start-index (long (* dur sample-rate))))))))))
 
 ;;; Visualization
 
