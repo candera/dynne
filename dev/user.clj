@@ -7,7 +7,8 @@
             [clojure.tools.namespace.repl :refer [refresh]]
             [dynne.operations :as ops]
             [dynne.sound :refer :all]
-            [dynne.sampled-sound :as samp])
+            [dynne.sampled-sound :as samp]
+            [hiphip.double :as dbl])
   (:import [javax.sound.sampled
             AudioFileFormat$Type
             AudioFormat
