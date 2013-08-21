@@ -219,7 +219,25 @@
           (add-chunks (chunks s1* sample-rate) 0
                       (chunks s2* sample-rate) 0))))))
 
-;; TODO: gain
+(defn gain
+  "Changes the amplitude of `s` by `g`."
+  [s ^double g]
+  (reify SampledSound
+    (duration [this] (duration s))
+    (channels [this] (channels s))
+    (chunks [this sample-rate]
+      (map (fn [chunk]
+             (map (fn [channel-chunk]
+                    (dbl/amap [x channel-chunk]
+                              (p/* x g)))
+                  chunk))
+           (chunks s sample-rate)))))
+
+;; TODO: read-sound
+
+;; TODO: multiply
+
+;; TODO: play
 
 ;; TODO: maybe make these into functions that return operations rather
 ;; than sounds.
