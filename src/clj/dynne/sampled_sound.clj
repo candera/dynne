@@ -5,7 +5,13 @@
             [hiphip.double :as dbl]
             [incanter.core :as incanter]
             [incanter.charts :as charts]
-            [primitive-math :as p]))
+            [primitive-math :as p])
+  (:import [javax.sound.sampled
+            AudioFileFormat$Type
+            AudioFormat
+            AudioFormat$Encoding
+            AudioInputStream
+            AudioSystem]))
 
 ;;; Abstraction
 
@@ -100,38 +106,62 @@
   (fn-sound duration 1 (fn sinusoid-fn [^long c ^double t]
                       (Math/sin (p/* t frequency 2.0 Math/PI)))))
 
+
+(defn- to-double-arrays
+  "Return a seq of arrays of doubles that decode the values in buf."
+  [^bytes buf ^long bytes-read ^long bytes-per-sample ^long chans]
+  (let [samples-read (/ bytes-read bytes-per-sample chans)
+        bb           (java.nio.ByteBuffer/allocate bytes-read)
+        arrs         (repeat chans (double-array samples-read))]
+    (.put bb buf 0 bytes-read)
+    (.position bb 0)
+    (dotimes [n samples-read]
+      (doseq [arr arrs]
+        ;; TODO: We're hardcoded to .getShort here, but the
+        ;; bytes-per-sample is a parameter. Should probably have
+        ;; something that knows how to read from a ByteBuffer given a
+        ;; number of bits.
+        (dbl/aset arr n (p/div (double (.getShort bb)) 32768.0))))))
+
+(defn- sample-chunks
+  "Return a seq of chunks from an AudioInputStream."
+  [^AudioInputStream ais ^long chans ^long bytes-per-sample ^long chunk-size]
+  (let [buf (byte-array (p/* chunk-size chans bytes-per-sample))
+        bytes-read (.read ais buf)]
+    (when (pos? bytes-read)
+      (lazy-seq
+       (cons (to-double-arrays buf (long bytes-read) bytes-per-sample chans)
+             (sample-chunks ais chans bytes-per-sample chunk-size))))))
+
 (defn read-sound
   "Given a path to a .wav or .mp3 file, return a SampledSound instance
   over it."
   [path]
   (let [file                 (io/file path)
-        base-file-format     (AudioSystem/getAudioFileFormat)
-        base-file-properties (.properties base-file-properties)
+        base-file-format     (AudioSystem/getAudioFileFormat file)
+        base-file-properties (.properties base-file-format)
         base-file-duration   (get base-file-properties "duration")
         is-wav?              (= AudioFileFormat$Type/WAVE (.getType base-file-format))
-        chans                (.getChannels base-format)
+        chans                (-> base-file-format .getFormat .getChannels)
         dur                  (/ base-file-duration 1000000.0)]
     (reify SampledSound
       (duration [this] dur)
       (channels [this] chans)
       (chunks [this sample-rate]
-        (let [bits-per-sample 16
+        (let [bits-per-sample  16
               bytes-per-sample (-> bits-per-sample (/ 8) long)
-              compat?         (and is-wav? (= sample-rate
-                                              (-> base-file-format .getFormat .getSampleRate)))
-              din             (if compat?
-                                (AudioSystem/getAudioInputStream file)
-                                (AudioSystem/getAudioInputStream
-                                 (AudioFormat. AudioFormat$Encoding/PCM_SIGNED
-                                               sample-rate
-                                               bits-per-sample
-                                               chans
-                                               (* bytes-per-sample chans)
-                                               sample-rate
-                                               true)
-                                 ))])))))
-
-
+              in               (AudioSystem/getAudioInputStream file)
+              decoded-format   (AudioFormat. AudioFormat$Encoding/PCM_SIGNED
+                                             sample-rate
+                                             bits-per-sample
+                                             chans
+                                             (* bytes-per-sample chans)
+                                             sample-rate
+                                             true)
+              din              (AudioSystem/getAudioInputStream
+                                decoded-format
+                                ^AudioInputStream in)]
+          (sample-chunks din chans 10000))))))
 
 ;;; Sound manipulation
 
@@ -269,8 +299,6 @@
 
 ;; TODO: multiply
 
-;; TODO: play
-
 ;; TODO: maybe make these into functions that return operations rather
 ;; than sounds.
 
@@ -307,6 +335,10 @@
 ;;            [l r])))))
 
 ;; TODO: pan
+
+;;; Playback
+
+;; TODO: play
 
 ;;; Visualization
 
