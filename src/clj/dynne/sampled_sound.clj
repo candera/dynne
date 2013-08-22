@@ -1,7 +1,8 @@
 (ns dynne.sampled-sound
   "Functions for manipulating a sound whose amplitude representation
   is arrays of doubles."
-  (:require [hiphip.double :as dbl]
+  (:require [clojure.java.io :as io]
+            [hiphip.double :as dbl]
             [incanter.core :as incanter]
             [incanter.charts :as charts]
             [primitive-math :as p]))
@@ -98,6 +99,39 @@
   [^double duration ^double frequency]
   (fn-sound duration 1 (fn sinusoid-fn [^long c ^double t]
                       (Math/sin (p/* t frequency 2.0 Math/PI)))))
+
+(defn read-sound
+  "Given a path to a .wav or .mp3 file, return a SampledSound instance
+  over it."
+  [path]
+  (let [file                 (io/file path)
+        base-file-format     (AudioSystem/getAudioFileFormat)
+        base-file-properties (.properties base-file-properties)
+        base-file-duration   (get base-file-properties "duration")
+        is-wav?              (= AudioFileFormat$Type/WAVE (.getType base-file-format))
+        chans                (.getChannels base-format)
+        dur                  (/ base-file-duration 1000000.0)]
+    (reify SampledSound
+      (duration [this] dur)
+      (channels [this] chans)
+      (chunks [this sample-rate]
+        (let [bits-per-sample 16
+              bytes-per-sample (-> bits-per-sample (/ 8) long)
+              compat?         (and is-wav? (= sample-rate
+                                              (-> base-file-format .getFormat .getSampleRate)))
+              din             (if compat?
+                                (AudioSystem/getAudioInputStream file)
+                                (AudioSystem/getAudioInputStream
+                                 (AudioFormat. AudioFormat$Encoding/PCM_SIGNED
+                                               sample-rate
+                                               bits-per-sample
+                                               chans
+                                               (* bytes-per-sample chans)
+                                               sample-rate
+                                               true)
+                                 ))])))))
+
+
 
 ;;; Sound manipulation
 
@@ -232,8 +266,6 @@
                               (p/* x g)))
                   chunk))
            (chunks s sample-rate)))))
-
-;; TODO: read-sound
 
 ;; TODO: multiply
 
