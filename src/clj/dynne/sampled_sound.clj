@@ -253,27 +253,47 @@
   "Returns chunks from `chunks` until `n` samples have been returned."
   [^long n chunks]
   (cond
-   (zero? n) nil
+   (not (seq chunks)) nil
+
+   (not (pos? n)) nil
 
    (< n (dbl/alength (ffirst chunks)))
    [(map #(dbl-asub % 0 n) (first chunks))]
 
-   (seq chunks)
-   (cons (first chunks)
-         (take-samples (- n (dbl/alength (ffirst chunks)))
-                       (rest chunks)))))
+   :else
+   (lazy-seq
+    (cons (first chunks)
+          (take-samples (- n (dbl/alength (ffirst chunks)))
+                        (rest chunks))))))
+
+(defn multiplex
+  "Takes a single-channel sound `s` and returns an `n`-channel sound
+  whose channels are all identical to channel 0 of `s`."
+  [s ^long n]
+  {:pre [(== 1 (channels s))]}
+  (if (== 1 n)
+    s
+    (reify SampledSound
+      (duration [this] (duration s))
+      (channels [this] n)
+      (chunks [this sample-rate]
+        (map (fn [[arr]] (repeat n arr))
+             (chunks s sample-rate))))))
 
 (defn trim
-  "Truncates `s` to the region between `start` and `end`."
+  "Truncates `s` to the region between `start` and `end`. If `end` is
+  beyond the end of the sound, just trim to the end."
   [s ^double start ^double end]
-  {:pre [(<= 0 start end (duration s))]}
-  (let [dur (min (duration s) (- end start))]
+  {:pre [(<= 0 start (duration s))
+         (<= start end)]}
+  (let [end* (min (duration s) end)
+        dur  (- end* start)]
     (reify SampledSound
       (duration [this] dur)
       (channels [this] (channels s))
       (chunks [this sample-rate]
         (let [samples-to-drop (-> start (* sample-rate) long)
-              samples-to-take (-> end (p/- start) (* sample-rate))]
+              samples-to-take (-> dur (* sample-rate) long)]
           (->> (chunks s sample-rate)
                (drop-samples samples-to-drop)
                (take-samples samples-to-take)))))))
@@ -284,33 +304,34 @@
   should be a function of the number of samples in the chunk to be
   produced, the first chunk, the offset in that chunk at which to
   start, the second chunk, and the offset in that chunk at which to
-  start."
-  [f chunks1 offset1 chunks2 offset2]
-  (let [[head1 & more1] chunks1
-        [head2 & more2] chunks2]
-    (cond
-     (and head1 head2)
-     (let [len1       (dbl/alength (first head1))
-           len2       (dbl/alength (first head2))
-           samples    (min (- len1 offset1) (- len2 offset2))
-           consumed1? (= len1 (+ samples offset1))
-           consumed2? (= len2 (+ samples offset2))]
-       (lazy-seq
-        (cons
-         (f samples head1 offset1 head2 offset2)
-         (combine-chunks f
-                         (if consumed1? more1 chunks1)
-                         (if consumed1? 0 (+ offset1 samples))
-                         (if consumed2? more2 chunks2)
-                         (if consumed2? 0 (+ offset2 samples))))))
+  start. If no offsets are provided, defaults to zero."
+  ([f chunks1 chunks2] (combine-chunks f chunks1 0 chunks2 0))
+  ([f chunks1 offset1 chunks2 offset2]
+     (let [[head1 & more1] chunks1
+           [head2 & more2] chunks2]
+       (cond
+        (and head1 head2)
+        (let [len1       (dbl/alength (first head1))
+              len2       (dbl/alength (first head2))
+              samples    (min (- len1 offset1) (- len2 offset2))
+              consumed1? (= len1 (+ samples offset1))
+              consumed2? (= len2 (+ samples offset2))]
+          (lazy-seq
+           (cons
+            (f samples head1 offset1 head2 offset2)
+            (combine-chunks f
+                            (if consumed1? more1 chunks1)
+                            (if consumed1? 0 (+ offset1 samples))
+                            (if consumed2? more2 chunks2)
+                            (if consumed2? 0 (+ offset2 samples))))))
 
-     (and head1 (not head2))
-     (cons (map #(dbl-asub offset1 (dbl/alength head1)) head1)
-           more1)
+        (and head1 (not head2))
+        (cons (map #(dbl-asub % offset1 (dbl/alength %)) head1)
+              more1)
 
-     (and (not head1) head2)
-     (cons (map #(dbl-asub offset2 (dbl/alength head2)) head2)
-           more2))))
+        (and (not head1) head2)
+        (cons (map #(dbl-asub % offset2 (dbl/alength %)) head2)
+              more2)))))
 
 (defn mix
   "Mixes sounds `s1` and `s2` together."
@@ -323,21 +344,21 @@
       (channels [this] (channels s1))
       (chunks [this sample-rate]
         (let [s1* (if (< d1 d2)
-                    (append s1 (constant (- d2 d1) (channels s1) 0.0))
+                    (append s1 (silence (- d2 d1) (channels s1)))
                     s1)
               s2* (if (<= d1 d2)
                     s2
-                    (append (chunks s2 sample-rate)
-                            (constant (- d1 d2) (channels s2) 0.0)))]
-          (combine-chunks (fn [samples head1 offset1 head2 offset2]
-                            (map #(dbl/amake [i samples]
-                                             (p/+ (dbl/aget %1 (p/+ i (long offset1)))
-                                                  (dbl/aget %2 (p/+ i (long offset2)))))
-                                 head1
-                                 head2))
+                    (append s2 (silence (- d1 d2) (channels s2))))]
+          (combine-chunks (fn mix-fn [samples head1 offset1 head2 offset2]
+                            (let [o1 (long offset1)
+                                  o2 (long offset2)]
+                              (map #(dbl/amake [i samples]
+                                               (p/+ (dbl/aget %1 (p/+ i o1))
+                                                    (dbl/aget %2 (p/+ i o2))))
+                                   head1
+                                   head2)))
                           (chunks s1* sample-rate)
-                          0
-                          (chunks s2* sample-rate) 0))))))
+                          (chunks s2* sample-rate)))))))
 
 (defn gain
   "Changes the amplitude of `s` by `g`."
@@ -370,16 +391,58 @@
               s2* (if (< dur (duration s2))
                     (trim s2 0 dur)
                     s2)]
-          (combine-chunks (fn [samples head1 offset1 head2 offset2]
+          (combine-chunks (fn envelope-fn [samples head1 offset1 head2 offset2]
                             (map #(dbl/amake [i samples]
                                              (p/* (dbl/aget %1 (p/+ i (long offset1)))
                                                   (dbl/aget %2 (p/+ i (long offset2)))))
                                  head1
                                  head2))
                           (chunks s1* sample-rate)
-                          0
-                          (chunks s2* sample-rate)
-                          0))))))
+                          (chunks s2* sample-rate)))))))
+
+(defn fade-in
+  "Fades `s` linearly from zero at the beginning to full volume at
+  `duration`."
+  [s ^double fade-duration]
+  (let [chans (channels s)]
+    (-> (linear fade-duration chans 0 1.0)
+        (append (constant (- (duration s) fade-duration) chans 1.0))
+        (envelope s))))
+
+(defn fade-out
+  "Fades the s to zero for the last `duration`."
+  [s ^double fade-duration]
+  (let [chans (channels s)]
+    (-> (constant (- (duration s) fade-duration) chans 1.0)
+        (append (linear fade-duration chans 1.0 0))
+        (envelope s))))
+
+(defn segmented-linear
+  "Produces a sound with `chans` channels whose amplitudes change
+  linearly as described by `spec`. Spec is a sequence of interleaved
+  amplitudes and durations. For example the spec
+
+  1.0 30
+  0   10
+  0   0.5
+  1.0
+
+  (written that way on purpose - durations and amplitudes are in columns)
+  would produce a sound whose amplitude starts at 1.0, linearly
+  changes to 0.0 at time 30, stays at 0 for 10 seconds, then ramps up
+  to its final value of 1.0 over 0.5 seconds"
+  [chans & spec]
+  {:pre [(and (odd? (count spec))
+              (< 3 (count spec)))]}
+  (->> spec
+       (partition 3 2)
+       (map (fn [[start duration end]] (linear duration chans start end)))
+       (reduce append)))
+
+(defn timeshift
+  "Inserts `dur` seconds of silence at the beginning of `s`"
+  [s ^double dur]
+  (append (silence dur (channels s)) s))
 
 (defn ->stereo
   "Creates a stereo sound. If given one single-channel sound,
@@ -394,7 +457,8 @@
            (duration [this] (duration s))
            (channels [this] 2)
            (chunks [this sample-rate]
-             (map vector (chunks s sample-rate) (chunks s sample-rate))))
+             (map (fn [[l] [r]] (vector l r))
+                  (chunks s sample-rate) (chunks s sample-rate))))
        (throw (ex-info "Can't steroize sound with other than one or two channels"
                        {:reason :cant-stereoize-channels
                         :s      s}))))
@@ -408,13 +472,12 @@
        (duration [this] (min (duration l) (duration r)))
        (channels [this] 2)
        (chunks [this sample-rate]
-         (combine-chunks (fn [samples [head1] offset1 [head2] offset2]
+         (combine-chunks (fn stereo-fn [samples [head1] offset1 [head2] offset2]
                            [(dbl-asub head1 offset1 (+ offset1 samples))
                             (dbl-asub head2 offset2 (+ offset2 samples))])
                          (chunks l sample-rate)
-                         0
-                         (chunks r sample-rate)
-                         0)))))
+                         (chunks r sample-rate))))))
+
 (defn pan
   "Takes a two-channel sound and mixes the channels together by
   `amount`, a float on the range [0.0, 1.0]. The ususal use is to take
@@ -516,7 +579,11 @@
 (defn- sampled-input-stream
   "Returns an implementation of `InputStream` over the data in `s`."
   [s sample-rate]
-  (let [chunks-remaining (atom (chunks s sample-rate))
+  (let [;; Empty chunks, while valid, will screw us over by causing us
+        ;; to return zero from read
+        useful-chunks    (remove (fn [[arr]] (== 0 (dbl/alength arr)))
+                                 (chunks s sample-rate))
+        chunks-remaining (atom useful-chunks)
         offset           (atom 0)
         chans            (channels s)]
     (proxy [java.io.InputStream] []
@@ -526,7 +593,7 @@
       (markSupported [] false)
       (read ^int
         ([] (throw (ex-info "Not implemented" {:reason :not-implemented})))
-        ([^bytes buf] (read this buf 0 (alength buf)))
+        ([^bytes buf] (.read this buf 0 (alength buf)))
         ([^bytes buf off len]
            (if-not @chunks-remaining
              -1
@@ -542,6 +609,18 @@
                                                 frames-requested)
                    bytes-to-read              (if read-remainder? chunk-bytes-remaining len)
                    bb                         (ByteBuffer/allocate bytes-to-read)]
+               (when (zero? bytes-to-read)
+                 (throw (ex-info "Zero bytes requested"
+                                 {:reason                 :no-bytes-requested
+                                  :off                    off
+                                  :len                    len
+                                  :start-frame            start-frame
+                                  :chunk-frames           chunk-frames
+                                  :chunk-frames-remaining chunk-frames-remaining
+                                  :frames-requested       frames-requested
+                                  :read-remainder?        read-remainder?
+                                  :frames-to-read         frames-to-read
+                                  :bytes-to-read          bytes-to-read})))
                (dotimes [n frames-to-read]
                  ;; TODO: Find a more efficient way to do this
                  (doseq [arr head-chunk]
