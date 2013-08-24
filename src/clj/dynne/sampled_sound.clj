@@ -135,6 +135,23 @@
        (cons (to-double-arrays buf (long bytes-read) bytes-per-sample chans)
              (sample-chunks ais chans bytes-per-sample chunk-size))))))
 
+(defn- read-duration
+  "Given a path to a .wav or .mp3 file, return the duration in
+  seconds."
+  [path]
+  (let [file                 (io/file path)
+        base-file-format     (AudioSystem/getAudioFileFormat file)
+        base-file-properties (.properties base-file-format)
+        base-file-duration   (get base-file-properties "duration")]
+    (if base-file-duration
+      (/ base-file-duration 1000000.0)
+      (let [in (AudioSystem/getAudioInputStream file)
+            base-format (.getFormat in)
+            frame-length (.getFrameLength in)
+            frames-per-second (.getSampleRate base-format)]
+        (.close in)
+        (/ frame-length (double frames-per-second))))))
+
 (defn read-sound
   "Given a path to a .wav or .mp3 file, return a SampledSound instance
   over it."
@@ -142,10 +159,8 @@
   (let [file                 (io/file path)
         base-file-format     (AudioSystem/getAudioFileFormat file)
         base-file-properties (.properties base-file-format)
-        base-file-duration   (get base-file-properties "duration")
-        is-wav?              (= AudioFileFormat$Type/WAVE (.getType base-file-format))
-        chans                (-> base-file-format .getFormat .getChannels)
-        dur                  (/ base-file-duration 1000000.0)]
+        dur                  (read-duration path)
+        chans                (-> base-file-format .getFormat .getChannels)]
     (reify SampledSound
       (duration [this] dur)
       (channels [this] chans)
