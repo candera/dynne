@@ -304,7 +304,33 @@
                   chunk))
            (chunks s sample-rate)))))
 
-;; TODO: envelope
+
+(defn envelope
+  "Multiplies the amplitudes of `s1` and `s2`, trimming the sound to
+  the shorter of the two."
+  [s1 s2]
+  {:pre [(= (channels s1) (channels s2))]}
+  (let [dur (min (duration s1) (duration s2))]
+    (reify SampledSound
+      (duration [this] dur)
+      (channels [this] (channels s1))
+      (chunks [this sample-rate]
+        (let [s1* (if (< dur (duration s1))
+                    (trim s1 0 dur)
+                    s1)
+              s2* (if (< dur (duration s2))
+                    (trim s2 0 dur)
+                    s2)]
+          (combine-chunks (fn [samples head1 offset1 head2 offset2]
+                            (map #(dbl/amake [i samples]
+                                             (p/* (dbl/aget %1 (p/+ i (long offset1)))
+                                                  (dbl/aget %2 (p/+ i (long offset2)))))
+                                 head1
+                                 head2))
+                          (chunks s1* sample-rate)
+                          0
+                          (chunks s2* sample-rate)
+                          0))))))
 
 (defn ->stereo
   "Creates a stereo sound. If given one single-channel sound,
