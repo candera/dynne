@@ -6,7 +6,8 @@
             [incanter.core :as incanter]
             [incanter.charts :as charts]
             [primitive-math :as p])
-  (:import [java.util.concurrent LinkedBlockingQueue]
+  (:import [java.nio ByteBuffer]
+           [java.util.concurrent LinkedBlockingQueue]
            [javax.sound.sampled
             AudioFileFormat$Type
             AudioFormat
@@ -112,7 +113,7 @@
   "Return a seq of arrays of doubles that decode the values in buf."
   [^bytes buf ^long bytes-read ^long bytes-per-sample ^long chans]
   (let [samples-read (/ bytes-read bytes-per-sample chans)
-        bb           (java.nio.ByteBuffer/allocate bytes-read)
+        bb           (ByteBuffer/allocate bytes-read)
         arrs         (repeatedly chans #(double-array samples-read))]
     (.put bb buf 0 bytes-read)
     (.position bb 0)
@@ -431,7 +432,7 @@
           (.put q ::eof)
           (let [chunk-len  (dbl/alength (first head-chunk))
                 byte-count (p/* chans 2 chunk-len)
-                bb         (java.nio.ByteBuffer/allocate byte-count)
+                bb         (ByteBuffer/allocate byte-count)
                 buffer     (byte-array byte-count)]
             (dotimes [n chunk-len]
               ;; TODO: Find a more efficient way to do this
@@ -476,6 +477,62 @@
   "Stops playing the sound represented by `player` (returned from `play`)."
   [player]
   ((:stop player)))
+
+;;; Serialization
+
+(defn- sampled-input-stream
+  "Returns an implementation of `InputStream` over the data in `s`."
+  [s sample-rate]
+  (let [chunks-remaining (atom (chunks s sample-rate))
+        offset           (atom 0)
+        chans            (channels s)]
+    (proxy [java.io.InputStream] []
+      (available [] (-> (duration s) (* sample-rate) long (* (channels s) 2)))
+      (close [])
+      (mark [readLimit] (throw (UnsupportedOperationException.)))
+      (markSupported [] false)
+      (read ^int
+        ([] (throw (ex-info "Not implemented" {:reason :not-implemented})))
+        ([^bytes buf] (read this buf 0 (alength buf)))
+        ([^bytes buf off len]
+           (if-not @chunks-remaining
+             -1
+             (let [[head-chunk & more-chunks] @chunks-remaining
+                   chunk-frames               (dbl/alength (first head-chunk))
+                   start-frame                (long @offset)
+                   chunk-frames-remaining     (- chunk-frames start-frame)
+                   chunk-bytes-remaining      (* chunk-frames-remaining 2 chans)
+                   frames-requested           (/ len 2 chans)
+                   read-remainder?            (<= chunk-frames-remaining frames-requested)
+                   frames-to-read             (if read-remainder?
+                                                chunk-frames-remaining
+                                                frames-requested)
+                   bytes-to-read              (if read-remainder? chunk-bytes-remaining len)
+                   bb                         (ByteBuffer/allocate bytes-to-read)]
+               (dotimes [n frames-to-read]
+                 ;; TODO: Find a more efficient way to do this
+                 (doseq [arr head-chunk]
+                   (.putShort bb (shortify (dbl/aget arr (p/+ start-frame n))))))
+               (.position bb 0)
+               (.get bb buf off bytes-to-read)
+               (if read-remainder?
+                 (do (reset! chunks-remaining more-chunks)
+                     (reset! offset 0))
+                 (swap! offset + frames-to-read))
+               bytes-to-read))))
+      (reset [] (throw (UnsupportedOperationException.)))
+      (skip [n] (throw (ex-info "Not implemented" {:reason :not-implemented}))))))
+
+(defn save
+  "Save sound `s` to `path` as a 16-bit WAV at `sample-rate`."
+  [s path sample-rate]
+  (AudioSystem/write (AudioInputStream.
+                      (sampled-input-stream s sample-rate)
+                      (AudioFormat. sample-rate 16 (channels s) true true)
+                      (-> s duration (* sample-rate) long))
+                     AudioFileFormat$Type/WAVE
+                     (io/file path)))
+
 
 ;;; Visualization
 
