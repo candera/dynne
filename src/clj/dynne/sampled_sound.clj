@@ -366,8 +366,31 @@
                          0
                          (chunks r sample-rate)
                          0)))))
-
-;; TODO: pan
+(defn pan
+  "Takes a two-channel sound and mixes the channels together by
+  `amount`, a float on the range [0.0, 1.0]. The ususal use is to take
+  a sound with separate left and right channels and combine them so
+  each appears closer to stereo center. An `amount` of 0.0 would leave
+  both channels unchanged, 0.5 would result in both channels being the
+  same (i.e. appearing to be mixed to stereo center), and 1.0 would
+  switch the channels."
+  [s ^double amount]
+  {:pre [(= 2 (channels s))]}
+  (let [amount-complement (- 1.0 amount)]
+    (reify SampledSound
+      (duration [this] (duration s))
+      (channels [this] 2)
+      (chunks [this sample-rate]
+        (map (fn [[arr1 arr2]]
+               [(dbl/amap [e1 arr1
+                           e2 arr2]
+                           (p/+ (p/* e1 amount-complement)
+                                (p/* e2 amount)))
+                (dbl/amap [e1 arr1
+                           e2 arr2]
+                           (p/+ (p/* e1 amount)
+                                (p/* e2 amount-complement)))])
+             (chunks s sample-rate))))))
 
 ;; TODO: maybe make these into functions that return operations rather
 ;; than sounds.
