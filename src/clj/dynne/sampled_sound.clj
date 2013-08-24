@@ -6,7 +6,8 @@
             [incanter.core :as incanter]
             [incanter.charts :as charts]
             [primitive-math :as p])
-  (:import [javax.sound.sampled
+  (:import [java.util.concurrent LinkedBlockingQueue]
+           [javax.sound.sampled
             AudioFileFormat$Type
             AudioFormat
             AudioFormat$Encoding
@@ -112,7 +113,7 @@
   [^bytes buf ^long bytes-read ^long bytes-per-sample ^long chans]
   (let [samples-read (/ bytes-read bytes-per-sample chans)
         bb           (java.nio.ByteBuffer/allocate bytes-read)
-        arrs         (repeat chans (double-array samples-read))]
+        arrs         (repeatedly chans #(double-array samples-read))]
     (.put bb buf 0 bytes-read)
     (.position bb 0)
     (dotimes [n samples-read]
@@ -121,7 +122,8 @@
         ;; bytes-per-sample is a parameter. Should probably have
         ;; something that knows how to read from a ByteBuffer given a
         ;; number of bits.
-        (dbl/aset arr n (p/div (double (.getShort bb)) 32768.0))))))
+        (dbl/aset arr n (p/div (double (.getShort bb)) 32768.0))))
+    arrs))
 
 (defn- sample-chunks
   "Return a seq of chunks from an AudioInputStream."
@@ -161,7 +163,7 @@
               din              (AudioSystem/getAudioInputStream
                                 decoded-format
                                 ^AudioInputStream in)]
-          (sample-chunks din chans 10000))))))
+          (sample-chunks din chans bytes-per-sample 10000))))))
 
 ;;; Sound manipulation
 
@@ -215,7 +217,7 @@
 (defn trim
   "Truncates `s` to the region between `start` and `end`."
   [s ^double start ^double end]
-  {:pre [(< 0 start end (duration s))]}
+  {:pre [(<= 0 start end (duration s))]}
   (let [dur (min (duration s) (- end start))]
     (reify SampledSound
       (duration [this] dur)
@@ -227,13 +229,14 @@
                (drop-samples samples-to-drop)
                (take-samples samples-to-take)))))))
 
-;; TODO: Generalize this, if it makes sense to do so. Which I'm
-;; guessing it will, for enveloping, although that has a different
-;; termination case.
-(defn- add-chunks
-  "Returns a sequence of chunks whose contents are the corresponding
-  elements of `chunks1` and `chunks2` added together."
-  [chunks1 ^long offset1 chunks2 ^long offset2]
+(defn- combine-chunks
+  "Returns a sequence of chunks whose contents are corresponding
+  elements of chunks1 and chunks2 combined by calling `f` on them. `f`
+  should be a function of the number of samples in the chunk to be
+  produced, the first chunk, the offset in that chunk at which to
+  start, the second chunk, and the offset in that chunk at which to
+  start."
+  [f chunks1 offset1 chunks2 offset2]
   (let [[head1 & more1] chunks1
         [head2 & more2] chunks2]
     (cond
@@ -245,15 +248,12 @@
            consumed2? (= len2 (+ samples offset2))]
        (lazy-seq
         (cons
-         (map #(dbl/amake [i samples]
-                          (p/+ (dbl/aget %1 (p/+ i offset1))
-                               (dbl/aget %2 (p/+ i offset2))))
-              head1
-              head2)
-         (add-chunks (if consumed1? more1 chunks1)
-                     (if consumed1? 0 (+ offset1 samples))
-                     (if consumed2? more2 chunks2)
-                     (if consumed2? 0 (+ offset2 samples))))))
+         (f samples head1 offset1 head2 offset2)
+         (combine-chunks f
+                         (if consumed1? more1 chunks1)
+                         (if consumed1? 0 (+ offset1 samples))
+                         (if consumed2? more2 chunks2)
+                         (if consumed2? 0 (+ offset2 samples))))))
 
      (and head1 (not head2))
      (cons (map #(dbl-asub offset1 (dbl/alength head1)) head1)
@@ -264,7 +264,7 @@
            more2))))
 
 (defn mix
-  "Mixes files `s1` and `s2` together."
+  "Mixes sounds `s1` and `s2` together."
   [s1 s2]
   {:pre [(= (channels s1) (channels s2))]}
   (let [d1 (duration s1)
@@ -280,8 +280,15 @@
                     s2
                     (append (chunks s2 sample-rate)
                             (constant (- d1 d2) (channels s2) 0.0)))]
-          (add-chunks (chunks s1* sample-rate) 0
-                      (chunks s2* sample-rate) 0))))))
+          (combine-chunks (fn [samples head1 offset1 head2 offset2]
+                            (map #(dbl/amake [i samples]
+                                             (p/+ (dbl/aget %1 (p/+ i (long offset1)))
+                                                  (dbl/aget %2 (p/+ i (long offset2)))))
+                                 head1
+                                 head2))
+                          (chunks s1* sample-rate)
+                          0
+                          (chunks s2* sample-rate) 0))))))
 
 (defn gain
   "Changes the amplitude of `s` by `g`."
@@ -297,48 +304,114 @@
                   chunk))
            (chunks s sample-rate)))))
 
-;; TODO: multiply
+;; TODO: envelope
+
+(defn ->stereo
+  "Creates a stereo sound. If given one single-channel sound,
+  duplicates channel zero on two channels. If given a single stereo
+  sound, returns it. If given two single-channel sounds, returns a
+  sound with the first sound on channel 0 and the second sound on
+  channel 1."
+  ([s]
+     (case (long (channels s))
+       2 s
+       1 (reify SampledSound
+           (duration [this] (duration s))
+           (channels [this] 2)
+           (chunks [this sample-rate]
+             (map vector (chunks s sample-rate) (chunks s sample-rate))))
+       (throw (ex-info "Can't steroize sound with other than one or two channels"
+                       {:reason :cant-stereoize-channels
+                        :s      s}))))
+  ([l r]
+     (when-not (= 1 (channels l) (channels r))
+       (throw (ex-info "Can't steroize two sounds unless they are both single-channel"
+                       {:reason :cant-stereoize-channels
+                        :l-channels (channels l)
+                        :r-channels (channels r)})))
+     (reify SampledSound
+       (duration [this] (min (duration l) (duration r)))
+       (channels [this] 2)
+       (chunks [this sample-rate]
+         (combine-chunks (fn [samples [head1] offset1 [head2] offset2]
+                           [(dbl-asub head1 offset1 (+ offset1 samples))
+                            (dbl-asub head2 offset2 (+ offset2 samples))])
+                         (chunks l sample-rate)
+                         0
+                         (chunks r sample-rate)
+                         0)))))
+
+;; TODO: pan
 
 ;; TODO: maybe make these into functions that return operations rather
 ;; than sounds.
 
-;; (defn ->stereo
-;;   "Creates a stereo sound. If given one single-channel sound,
-;;   duplicates channel zero on two channels. If given a single stereo
-;;   sound, returns it. If given two single-channel sounds, returns a
-;;   sound with the first sound on channel 0 and the second sound on
-;;   channel 1."
-;;   ([s]
-;;      (case (long (channels s))
-;;        1 (reify SampledSound
-;;            (channels [this] 2)
-;;            (duration [this] (duration s))
-;;            (amplitudes [this sample-rate]
-;;              (let [amps (amplitudes s sample-rate)]
-;;                [amps amps])))
-;;        2 s
-;;        (throw (ex-info "Can't stereoize sounds with other than one or two channels"
-;;                        {:reason :cant-stereoize-channels :s s}))))
-;;   ([l r]
-;;      (when-not (= 1 (channels l) (channels r))
-;;        (throw (ex-info "Can't steroize two sounds unless they are both single-channel"
-;;                        {:reason :cant-stereoize-channels
-;;                         :l-channels (channels l)
-;;                         :r-channels (channels r)})))
-;;      (reify SampledSound
-;;        (channels [this] 2)
-;;        (duration [this] (min (duration l) (duration r)))
-;;        (amplitudes [this sample-rate]
-;;          (let [l-samples (nth (amplitudes l sample-rate) 0)
-;;                r-samples (nth (amplitudes r sample-rate) 0)]
-;;            ;; TODO: Truncate the longer one
-;;            [l r])))))
-
-;; TODO: pan
-
 ;;; Playback
 
-;; TODO: play
+;; TODO: This is identical to the one in sound.clj. Merge them if we
+;; don't get rid of sound.clj
+(defmacro shortify
+  "Takes a floating-point number f in the range [-1.0, 1.0] and scales
+  it to the range of a 16-bit integer. Clamps any overflows."
+  [f]
+  (let [max-short-as-double (double Short/MAX_VALUE)]
+    `(let [clamped# (-> ~f (min 1.0) (max -1.0))]
+       (short (p/* ~max-short-as-double clamped#)))))
+
+(defn- sample-provider
+  [s ^LinkedBlockingQueue q ^long sample-rate]
+  (let [chans          (channels s)]
+    (future
+      (loop [[head-chunk & more] (chunks s sample-rate)]
+        (if-not head-chunk
+          (.put q ::eof)
+          (let [chunk-len  (dbl/alength (first head-chunk))
+                byte-count (p/* chans 2 chunk-len)
+                bb         (java.nio.ByteBuffer/allocate byte-count)
+                buffer     (byte-array byte-count)]
+            (dotimes [n chunk-len]
+              ;; TODO: Find a more efficient way to do this
+              (doseq [arr head-chunk]
+                (.putShort bb (shortify (dbl/aget arr n)))))
+            (.position bb 0)
+            (.get bb buffer)
+            ;; Bail if the player gets too far behind
+            (when (.offer q buffer 2 java.util.concurrent.TimeUnit/SECONDS)
+              (recur more))))))))
+
+;; TODO: This is identical to the one in sound.clj. Merge them if we
+;; don't get rid of sound.clj
+(defn play
+  "Plays `s` asynchronously. Returns a value that can be passed to `stop`."
+  [s]
+  (let [sample-rate 44100
+        chans       (channels s)
+        sdl         (AudioSystem/getSourceDataLine (AudioFormat. sample-rate
+                                                                 16
+                                                                 chans
+                                                                 true
+                                                                 true))
+        stopped     (atom false)
+        q           (LinkedBlockingQueue. 10)
+        provider    (sample-provider s q sample-rate)]
+    {:player   (future (.open sdl)
+                       (loop [buf ^bytes (.take q)]
+                         (when-not (or @stopped (= buf ::eof))
+                           (.write sdl buf 0 (alength buf))
+                           (.start sdl) ;; Doesn't hurt to do it more than once
+                           (recur (.take q)))))
+     :stop     (fn []
+                 (reset! stopped true)
+                 (future-cancel provider)
+                 (.stop sdl))
+     :q        q
+     :provider provider
+     :sdl      sdl}))
+
+(defn stop
+  "Stops playing the sound represented by `player` (returned from `play`)."
+  [player]
+  ((:stop player)))
 
 ;;; Visualization
 
@@ -363,11 +436,11 @@
   "Visualizes channel `c` (default 0) of `s` by plotting it on a graph."
   ([s] (visualize s 0))
   ([s c]
-     (let [sample-rate 16000
+     (let [sample-rate 44100
            num-data-points 4000
            channel-chunks (map #(nth % c) (chunks s sample-rate))
            num-samples (-> s duration (* sample-rate) long)
-           sample-period (-> num-samples (/ num-data-points) long)
+           sample-period (max 1 (-> num-samples (/ num-data-points) long))
            indexes (range 0 num-samples sample-period)
            times (map #(/ (double %) sample-rate) indexes)
            samples (every-nth channel-chunks sample-period)]
