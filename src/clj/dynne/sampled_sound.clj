@@ -188,6 +188,34 @@
 
 ;;; Sound manipulation
 
+(defn peak
+  "Returns the maximum absolute amplitude of `s` when sampled at
+  `sample-rate`. If provided, will return immediately on finding a
+  value above `limit`."
+  ([s sample-rate] (peak s sample-rate Double/MAX_VALUE))
+  ([s sample-rate limit]
+     (loop [[head-chunk & more-chunks] (chunks s sample-rate)
+            max-amplitude Double/MIN_VALUE]
+       (cond
+        ;; Short-circuit if we hit `limit`
+        (< limit max-amplitude) max-amplitude
+
+        ;; Sequence has been consumed
+        (not (seq head-chunk)) max-amplitude
+
+        :else
+        (recur more-chunks
+               (apply max
+                      (map (fn [arr]
+                             (dbl/areduce [e arr]
+                                          m max-amplitude
+                                          (max m (Math/abs e))))
+                           head-chunk)))))))
+
+;;; Sound operations
+
+;; An operation takes one or more sounds and returns a new sound
+
 (defn append
   "Concatenates two sounds together"
   [s1 s2]
