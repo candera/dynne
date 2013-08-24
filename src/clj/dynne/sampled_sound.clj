@@ -80,6 +80,11 @@
   [sample-rate num-samples i c]
   x)
 
+(defn silence
+  "Returns a sound of `duration` with `chans` channels of silence."
+  [dur chans]
+  (constant dur chans 0.0))
+
 ;; TODO: It would be nice if we had a way to indicate local bindings
 ;; that we want to be in effect outside the amake so we don't have all
 ;; these stupid calls to double inside the inner loop.
