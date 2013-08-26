@@ -166,7 +166,8 @@
         base-file-format     (AudioSystem/getAudioFileFormat file)
         base-file-properties (.properties base-file-format)
         dur                  (read-duration path)
-        chans                (-> base-file-format .getFormat .getChannels)]
+        chans                (-> base-file-format .getFormat .getChannels)
+        file-sample-rate     (-> (AudioSystem/getAudioFileFormat file) .getFormat .getSampleRate)]
     (reify SampledSound
       (duration [this] dur)
       (channels [this] chans)
@@ -175,7 +176,7 @@
               bytes-per-sample (-> bits-per-sample (/ 8) long)
               in               (AudioSystem/getAudioInputStream file)
               decoded-format   (AudioFormat. AudioFormat$Encoding/PCM_SIGNED
-                                             sample-rate
+                                             file-sample-rate
                                              bits-per-sample
                                              chans
                                              (* bytes-per-sample chans)
@@ -183,8 +184,19 @@
                                              true)
               din              (AudioSystem/getAudioInputStream
                                 decoded-format
-                                ^AudioInputStream in)]
-          (sample-chunks din chans bytes-per-sample 10000))))))
+                                ^AudioInputStream in)
+              ddin             (if (not= sample-rate file-sample-rate)
+                                 (AudioSystem/getAudioInputStream
+                                  (AudioFormat. AudioFormat$Encoding/PCM_SIGNED
+                                                sample-rate
+                                                bits-per-sample
+                                                chans
+                                                (* bytes-per-sample chans)
+                                                sample-rate
+                                                true)
+                                  din)
+                                 din)]
+          (sample-chunks ddin chans bytes-per-sample 10000))))))
 
 ;;; Sound manipulation
 
