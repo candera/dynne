@@ -163,11 +163,12 @@
   over it."
   [path]
   (let [file                 (io/file path)
-        base-file-format     (AudioSystem/getAudioFileFormat file)
+        base-file-format     (-> file  AudioSystem/getAudioFileFormat .getFormat)
         base-file-properties (.properties base-file-format)
         dur                  (read-duration path)
-        chans                (-> base-file-format .getFormat .getChannels)
-        file-sample-rate     (-> (AudioSystem/getAudioFileFormat file) .getFormat .getSampleRate)]
+        chans                (.getChannels base-file-format)
+        file-sample-rate     (.getSampleRate base-file-format)
+        file-encoding        (.getEncoding base-file-format)]
     (reify SampledSound
       (duration [this] dur)
       (channels [this] chans)
@@ -175,17 +176,19 @@
         (let [bits-per-sample  16
               bytes-per-sample (-> bits-per-sample (/ 8) long)
               in               (AudioSystem/getAudioInputStream file)
-              decoded-format   (AudioFormat. AudioFormat$Encoding/PCM_SIGNED
-                                             file-sample-rate
-                                             bits-per-sample
-                                             chans
-                                             (* bytes-per-sample chans)
-                                             sample-rate
-                                             true)
-              din              (AudioSystem/getAudioInputStream
-                                decoded-format
-                                ^AudioInputStream in)
-              ddin             (if (not= sample-rate file-sample-rate)
+              decoded          (if (= AudioFormat$Encoding/PCM_SIGNED file-encoding)
+                                 in
+                                 (AudioSystem/getAudioInputStream
+                                  (AudioFormat. AudioFormat$Encoding/PCM_SIGNED
+                                                file-sample-rate
+                                                bits-per-sample
+                                                chans
+                                                (* bytes-per-sample chans)
+                                                file-sample-rate
+                                                true)
+                                  ^AudioInputStream in))
+              resampled        (if (= sample-rate file-sample-rate)
+                                 decoded
                                  (AudioSystem/getAudioInputStream
                                   (AudioFormat. AudioFormat$Encoding/PCM_SIGNED
                                                 sample-rate
@@ -194,9 +197,8 @@
                                                 (* bytes-per-sample chans)
                                                 sample-rate
                                                 true)
-                                  din)
-                                 din)]
-          (sample-chunks ddin chans bytes-per-sample 10000))))))
+                                  ^AudioInputStream decoded))]
+          (sample-chunks resampled chans bytes-per-sample 10000))))))
 
 ;;; Sound manipulation
 
