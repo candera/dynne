@@ -122,6 +122,15 @@ Thanks to [Zach Tellman](https://github.com/ztellman) for his
 [primitive-math](https://github.com/ztellman/primitive-math) library,
 which was helpful in finding sub-optimal usages of numeric operations.
 
+Thanks to [Rich Hickey](http://twitter.com/richhickey) for his
+suggestion to rewrite dynne in terms of sequences of double arrays,
+which led to a massive increase in performance.
+
+Thanks to [Prismatic](http://getprismatic.com) for their
+[hiphip](https://github.com/Prismatic/hiphip) library, which was really
+helpful in writing the most out of the operations at the core of
+dynne.
+
 ## License
 
 Copyright © 2013 Craig Andera
