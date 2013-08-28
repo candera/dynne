@@ -7,7 +7,7 @@
                  [incanter "1.5.2"]
                  [com.googlecode.soundlibs/mp3spi "1.9.5-1"]
                  [primitive-math "0.1.3"]
-                 [prismatic/hiphip "0.1.0"]]
+                 [hiphip-aot "0.1.1"]]
   :java-source-paths ["src/java"]
   :source-paths ["src/clj"]
   :global-vars {*warn-on-reflection* true}
