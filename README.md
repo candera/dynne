@@ -15,21 +15,26 @@ Available on [Clojars](https://clojars.org/org.craigandera/dynne). Put
 this in your `project.clj`:
 
 ```
-[org.craigandera/dynne "0.2.0"]
+[org.craigandera/dynne "0.3.0"]
 ```
 
 ## Concepts
 
 The basic concept in dynne is the _sound_. A sound is the combination
-of a duration, a number of channels, and a way to get the amplitude of
-a particular channel at a particular point in time. The
-_sample_ function is the preferred way to do this.
+of a duration, a number of channels, and a **deferred** way to get the
+amplitudes of all the channels. There is a protocol,
+`dynne.sampled-sound/SampledSound` that gives these capabilities
+through its `duration`, `channels` and `chunks` functions,
+respectively.
 
-Amplitudes are represented as double-precision floating point numbers
-between -1.0 and 1.0 (inclusive).
+Calling `chunks` returns a Clojure seq of chunks. A _chunk_ is a seq
+of Java primitive double arrays, one per channel. All arrays in the
+chunk will be the same length. Amplitudes are represented as
+double-precision floating point numbers, which will be clipped to -1.0
+and 1.0 (inclusive) when a sound is saved (via _save_ ).
 
 Constructors for sounds are given for WAV and MP3 files
-( _read-sound_ ), and for arbitrary functions ( _sound_ ).
+( _read-sound_ ), and for arbitrary functions ( _fn-sound_ ).
 
 Processor functions accept one or more sounds and return a new sound.
 Combination is by functional composition, so combining two sounds does
@@ -39,7 +44,7 @@ combined operation is deferred until the combined sound is sampled.
 ## Usage
 
 ```clojure
-(require '[dynne.sound :refer :all])
+(require '[dynne.sampled-sound :refer :all])
 
 ;; Create a simple one-second, 440 Hz sine wave sound
 (def s (sinusoid 1.0 440))
@@ -50,7 +55,7 @@ combined operation is deferred until the combined sound is sampled.
 ;; See what the first 0.01 seconds look like
 (visualize (trim s 0 0.01))
 
-;; Play it.
+;; Play it. Maybe turn down your volume a bit first. :)
 (play s)
 
 ;; Define a new sound that fades `s` in over 0.5 seconds
@@ -59,10 +64,11 @@ combined operation is deferred until the combined sound is sampled.
 ;; Visualize that
 (visualize s2)
 
-;; See what its value at time 0.25 is. The final argument is the
-;; channel number, since sounds can be stereo or even multi-channel
-(sample s2 0.25 0)
-;; => 3.138066912872848E-14
+;; Get the double array holding the raw amplitude data of the first
+;; channel of the first chunk. Note that we have to pass a smaple
+;; rate. File-based sounds will be converted to this rate.
+(ffirst (chunks s2 16000))
+;; => #<double[] [D@53b7f3b2>
 
 ;; Build up a more complicated sound
 (def l (-> (sinusoid 3.0 440)
@@ -83,9 +89,30 @@ combined operation is deferred until the combined sound is sampled.
 
 ;; read-sound also works with MP3 files, but we can only save to WAV
 
-;; Make a sound of our own design: two seconds of white noise
-(def s5 (sound 2.0 (fn ^double [^double t] (rand))))
+;; Make a sound of our own design: two seconds of stereo white noise
+(def s5 (fn-sound 2.0 2 (fn ^double [^long c ^double t] (- (rand 2.0) 1.0))))
+
+;; Play it too
+(play (gain s5 0.1))
 ```
+
+## History
+
+### 0.3.0
+
+Major overhaul. Deprecate `dynne.sound` namespace in favor of
+`dynne.sampled-sound`, which uses a more efficient, chunked
+representation of sounds leveraging Java native arrays for way higher
+performance.
+
+### 0.2.0
+
+Performance improvements
+
+### 0.1.0
+
+Initial release
+
 
 ## FAQ
 
@@ -130,6 +157,10 @@ Thanks to [Prismatic](http://getprismatic.com) for their
 [hiphip](https://github.com/Prismatic/hiphip) library, which was really
 helpful in writing the most out of the operations at the core of
 dynne.
+
+Thanks to [tommyettinger](https://github.com/tommyettinger) for his
+[fork of hiphip](https://github.com/tommyettinger/hiphip-aot) that
+works around an issue with AOT.
 
 ## License
 
