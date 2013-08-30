@@ -67,11 +67,15 @@
                     (dbl/amake [i# chunk-size#]
                                (let [~index (p/+ i# base-index#)]
                                  ~expr)))))
-              ;; Handle the last chunk specially, since it's probably shorter
-              [(for [~c (range chans#)]
-                 (dbl/amake [i# (mod ~num-samples chunk-size#)]
-                            (let [~index (p/+ i# (p/* (p/- num-chunks# 1) chunk-size#))]
-                                 ~expr)))])))))))
+              ;; Handle the last chunk specially, since it's probably
+              ;; shorter.
+              [(let [chunks-so-far# (p/- num-chunks# 1)
+                     samples-so-far# (p/* chunk-size# chunks-so-far#)
+                     samples-remaining# (p/- ~num-samples samples-so-far#)]
+                 (for [~c (range chans#)]
+                   (dbl/amake [i# samples-remaining#]
+                              (let [~index (p/+ i# (p/* (p/- num-chunks# 1) chunk-size#))]
+                                ~expr))))])))))))
 
 (defsound constant duration chans
   "Returns a sound of `duration` that has `chans` channels, each of
