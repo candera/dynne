@@ -117,6 +117,13 @@
   (fn-sound duration 1 (fn sinusoid-fn [^long c ^double t]
                       (Math/sin (p/* t frequency 2.0 Math/PI)))))
 
+(defn square-wave
+  "Produces a single-channel sound that toggles between 1.0 and -1.0
+  at frequency `freq`."
+  [^double duration ^double frequency]
+  (fn-sound duration 1 (fn square-wave-fn [^long c ^double t]
+                         (let [x (-> t (p/* frequency 2.0) long)]
+                           (if (even? x) 1.0 -1.0)))))
 
 (defn- to-double-arrays
   "Return a seq of arrays of doubles that decode the values in buf."
