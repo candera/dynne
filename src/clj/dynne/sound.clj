@@ -1,3 +1,13 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; DEPRECATED. Use the functions in dynne.sampled-sound instead.
+;;
+;; It turns out that representing sounds in chunks of Java primitive
+;; arrays of doubles is way faster than the way we do it in this
+;; namespace.
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (ns dynne.sound
   "Functions for working with sounds"
   (:require [clojure.java.io :as io]
