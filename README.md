@@ -130,7 +130,7 @@ I busted it out into its own thing, which is now dynne.
 ### Why didn't you just use Overtone?
 
 Mainly because I started out just playing around with the idea and at
-some point crossed into being completey obsessed with writing my own
+some point crossed into being completely obsessed with writing my own
 thing. I never even looked at whether
 [Overtone](http://overtone.github.io/) can do what I need, because I
 knew if I did, and it could, I would stop working on the problem, and
