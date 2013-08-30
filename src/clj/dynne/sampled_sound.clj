@@ -687,8 +687,13 @@
   "Visualizes channel `c` (default 0) of `s` by plotting it on a graph."
   ([s] (visualize s 0))
   ([s c]
-     (let [sample-rate 44100
-           num-data-points 4000
+     (let [num-data-points 4000
+           ;; For short sounds, we need to sample at a higher rate, or
+           ;; the graph won't be smooth enough. For longer sounds, we
+           ;; can get away with a lower rate.
+           sample-rate (if (< (/ num-data-points 16000) (duration s))
+                         16000
+                         44100)
            channel-chunks (map #(nth % c) (chunks s sample-rate))
            num-samples (-> s duration (* sample-rate) long)
            sample-period (max 1 (-> num-samples (/ num-data-points) long))
