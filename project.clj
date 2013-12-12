@@ -1,9 +1,10 @@
-(defproject org.craigandera/dynne "0.3.0"
+(defproject org.craigandera/dynne "0.4.0-SNAPSHOT"
   :description "A library for working with audio"
   :url "https://github.com/candera/dynne"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure "1.5.1"]
+                 [org.clojure/core.async "0.1.242.0-44b1e3-alpha"]
                  [incanter "1.5.2"]
                  [com.googlecode.soundlibs/mp3spi "1.9.5-1"]
                  [primitive-math "0.1.3"]
