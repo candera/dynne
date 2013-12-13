@@ -1,7 +1,9 @@
 (ns dynne.async-sound
   "Functions for manipulating a sound whose amplitude representation
   is channels shipping around arrays of doubles."
-  (:require [clojure.core.async :as async :refer (go go-loop chan >! <! alt!)]
+  (:require [clojure.core.async :as async :refer (close! go go-loop chan
+                                                         >! <! alt! alt!!
+                                                         >!! <!!)]
             [clojure.java.io :as io]
             [hiphip.double :as dbl]
             [incanter.core :as incanter]
@@ -21,15 +23,14 @@
 ;; The size of the windowed buffers that async channels will use.
 ;; TODO: Pick a good default, and maybe add knobs for changing it in
 ;; various stages of the pipeline.
-(def ^:dynamic *buffer-size* 10)
+(def ^:dynamic *processing-options* {:buffer-size 10})
 
 (defn make-chan
   "Makes a new core.async channel with the default configuration."
   []
-  (chan *buffer-size*))
+  (chan (:buffer-size *processing-options*)))
 
 ;;; Abstraction
-
 
 (defprotocol Sound
   "Represents a sound as a channel delivering vectors of Java double arrays."
@@ -45,12 +46,19 @@
 (defn frame
   "Given an channel producing frames and an error channel, produce the
   next frame from the frame channel, unless an error is available on
-  the error channel, in which case, throw it."
+  the error channel, in which case, throw it. Return nil if the frames
+  channel has closed."
   [frames errors]
-  (go
-   (alt!
-    errors ([error] (throw error))
-    frames ([frame] frame))))
+  (alt!!
+   errors ([error] (throw error))
+   frames ([frame] frame)))
+
+(defn frame-seq
+  "Given a sound and a sample rate, return a regular Clojure seq of
+  the frames."
+  [frames errors]
+  (when-let [frame (frame frames errors)]
+    (lazy-seq (cons frame (frame-seq frames errors)))))
 
 ;;; Sound construction
 
@@ -87,19 +95,22 @@
                 (doseq [chunk-num# (range (dec num-chunks#))]
                   (let [base-index# (p/* (long chunk-num#) chunk-size#)]
                     (>! out-chan#
-                     (for [~c (range chans#)]
-                       (dbl/amake [i# chunk-size#]
-                                  (let [~index (p/+ i# base-index#)]
-                                    ~expr))))))
+                        (for [~c (range chans#)]
+                          (dbl/amake [i# chunk-size#]
+                                     (let [~index (p/+ i# base-index#)]
+                                       ~expr))))))
                 (let [chunks-so-far# (p/- num-chunks# 1)
                       samples-so-far# (p/* chunk-size# chunks-so-far#)
                       samples-remaining# (p/- ~num-samples samples-so-far#)]
-                  (>! out-chan# (for [~c (range chans#)]
+                  (>! out-chan#
+                      (for [~c (range chans#)]
                         (dbl/amake [i# samples-remaining#]
                                    (let [~index (p/+ i# (p/* (p/- num-chunks# 1) chunk-size#))]
                                      ~expr)))))
                 (catch Throwable t
-                  (>! err-chan# t))))
+                  (>! err-chan# t))
+                (finally
+                  (close! out-chan#))))
              out-chan#))))))
 
 (defsound constant duration chans
@@ -247,8 +258,8 @@
   ([s sample-rate limit]
      (let [errors (make-chan)
            frames (frames s sample-rate errors)]
-       (loop [max-amplitude Double/MIN_VALUE
-              frame (frame frames errors)]
+       (loop [frame (frame frames errors)
+              max-amplitude Double/MIN_VALUE]
          (cond
           ;; Short-circuit if we hit `limit`
           (< limit max-amplitude) max-amplitude
@@ -343,25 +354,62 @@
                (make-chan)
                (fn [[arr]] (repeat n arr)))))))
 
+(defn trim
+  "Truncates `s` to the region between `start` and `end`. If `end` is
+  beyond the end of the sound, just trim to the end."
+  [s ^double start ^double end]
+  {:pre [(<= 0 start (duration s))
+         (<= start end)]}
+  (let [end* (min (duration s) end)
+        dur  (- end* start)]
+    (reify Sound
+      (duration [this] dur)
+      (channels [this] (channels s))
+      (frames [this sample-rate errors]
+        (let [samples-to-drop (-> start (* sample-rate) long)
+              samples-to-take (-> dur (* sample-rate) long)
+              src-frames (frames s sample-rate errors)
+              out-chan (make-chan)]
+          ;; TODO: This doesn't work with go - figure out why and switch
+          (async/thread
+           (try
+             (loop [samples-to-drop samples-to-drop
+                    samples-to-take samples-to-take]
+               (if-let [frame (frame src-frames errors)]
+                 (let [frame-length (dbl/alength (first frame))]
+                   (cond
+
+                    ;; First we maybe drop a bunch of samples
+                    (pos? samples-to-drop)
+                    (if (< samples-to-drop frame-length)
+                      ;; It's possible we're asked to take fewer
+                      ;; than remain in the frame
+                      (let [partial-frame-samples (min samples-to-take
+                                                       (- frame-length samples-to-drop))]
+                        (>!! out-chan (map #(dbl-asub %
+                                                      samples-to-drop
+                                                      (+ partial-frame-samples samples-to-drop))
+                                           frame))
+                        (recur 0 (- samples-to-take partial-frame-samples)))
+                      (recur (- samples-to-drop frame-length)
+                             samples-to-take))
+
+                    ;; Then we maybe take some
+                    (pos? samples-to-take)
+                    (do (if (< samples-to-take frame-length)
+                          (>!! out-chan (map #(dbl-asub % 0 samples-to-take) frame))
+                          (>!! out-chan frame))
+                        (recur samples-to-drop
+                               (- samples-to-take frame-length)))))))
+             (catch Throwable t
+               (>!! errors t))
+             (finally
+               (close! out-chan))))
+          out-chan)))))
+
 (comment
 
-  (defn trim
-    "Truncates `s` to the region between `start` and `end`. If `end` is
-  beyond the end of the sound, just trim to the end."
-    [s ^double start ^double end]
-    {:pre [(<= 0 start (duration s))
-           (<= start end)]}
-    (let [end* (min (duration s) end)
-          dur  (- end* start)]
-      (reify SampledSound
-        (duration [this] dur)
-        (channels [this] (channels s))
-        (chunks [this sample-rate]
-          (let [samples-to-drop (-> start (* sample-rate) long)
-                samples-to-take (-> dur (* sample-rate) long)]
-            (->> (chunks s sample-rate)
-                 (drop-samples samples-to-drop)
-                 (take-samples samples-to-take)))))))
+
 
   (defn- combine-chunks
     "Returns a sequence of chunks whose contents are corresponding
@@ -738,15 +786,16 @@
            ;; For short sounds, we need to sample at a higher rate, or
            ;; the graph won't be smooth enough. For longer sounds, we
            ;; can get away with a lower rate.
-           sample-rate (if (< (/ num-data-points 16000) (duration s))
-                         16000
-                         44100)
-           channel-chunks (map #(nth % c) (chunks s sample-rate))
-           num-samples (-> s duration (* sample-rate) long)
-           sample-period (max 1 (-> num-samples (/ num-data-points) long))
-           indexes (range 0 num-samples sample-period)
-           times (map #(/ (double %) sample-rate) indexes)
-           samples (every-nth channel-chunks sample-period)]
+           sample-rate     (if (< (/ num-data-points 16000) (duration s))
+                             16000
+                             44100)
+           errors          (chan)
+           channel-chunks  (map #(nth % c) (frame-seq (frames s sample-rate errors) errors))
+           num-samples     (-> s duration (* sample-rate) long)
+           sample-period   (max 1 (-> num-samples (/ num-data-points) long))
+           indexes         (range 0 num-samples sample-period)
+           times           (map #(/ (double %) sample-rate) indexes)
+           samples         (every-nth channel-chunks sample-period)]
        (incanter/view (charts/xy-plot
                        times
                        samples

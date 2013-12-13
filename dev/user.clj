@@ -1,13 +1,15 @@
 (ns user
   "Holds utility functions for working at the REPL in this project"
-  (:require [clojure.core.reducers :as r]
+  (:require [clojure.core.async :as async]
+            [clojure.core.reducers :as r]
             [clojure.java.io :as io]
             [clojure.pprint :refer [pprint]]
             [clojure.repl :refer [doc pst]]
             [clojure.tools.namespace.repl :refer [refresh]]
             [dynne.operations :as ops]
             ;;[dynne.sound :refer :all]
-            [dynne.sampled-sound :refer :all]
+            ;;[dynne.sampled-sound :refer :all]
+            [dynne.async-sound :refer :all]
             [hiphip.double :as dbl])
   (:import [javax.sound.sampled
             AudioFileFormat$Type
