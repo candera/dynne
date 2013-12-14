@@ -407,71 +407,92 @@
                (close! out-chan))))
           out-chan)))))
 
+(defn- combine-frames
+  "Returns a channel that will deliver a sequence of chunks whose
+  contents are corresponding elements of `input1` and `input2`, each a
+  channel delivering frames, combined by calling `f` on them. `f`
+  should be a function of the number of samples in the chunk to be
+  produced, the first chunk, the offset in that chunk at which to
+  start, the second chunk, and the offset in that chunk at which to
+  start. If no offsets are provided, defaults to zero. If either
+  channel runs out of data, delivers the remaining data in the other channel
+  without applying f."
+  ([f input1 input2 errors] (combine-frames f input1 0 input2 0 errors))
+  ([f input1 offset1 input2 offset2 errors]
+     (let [out (make-chan)]
+       (go
+        (try
+          (loop [frame1 (frame input1 errors)
+                 offset1 offset1
+                 frame2 (frame input2 errors)
+                 offset2 offset2]
+            (cond
+             (and frame1 frame2)
+             (let [len1       (dbl/alength (first frame1))
+                   len2       (dbl/alength (first frame2))
+                   samples    (min (- len1 offset1) (- len2 offset2))
+                   consumed1? (= len1 (+ samples offset1))
+                   consumed2? (= len2 (+ samples offset2))]
+               (>! out (f samples frame1 offset1 frame2 offset2))
+               (recur (if consumed1? (frame input1 errors) frame1)
+                      (if consumed1? 0 (+ offset1 samples))
+                      (if consumed2? (frame input2 errors) frame2)
+                      (if consumed2? 0 (+ offset2 samples))))
+
+             (and frame1 (not frame2))
+             (do
+               (>! out (map #(dbl-asub % offset1 (dbl/alength %)) frame1))
+               (recur (frame input1 errors) 0 nil 0))
+
+             (and (not frame1) frame2)
+             (do
+               (>! out (map #(dbl-asub % offset2 (dbl/alength %)) frame2))
+               (recur nil 0 (frame input2 errors) 0))))
+          (catch Throwable t
+            (>! errors t))
+          (finally
+            (close! out))))
+       out)))
+
+(defn- mix-frame
+  "Adds two frames together."
+  [samples frame1 offset1 frame2 offset2]
+  (let [o1 (long offset1)
+        o2 (long offset2)]
+    (map #(dbl/amake [i samples]
+                     (p/+ (dbl/aget %1 (p/+ i o1))
+                          (dbl/aget %2 (p/+ i o2))))
+         frame1
+         frame2)))
+
+(defn mix
+  "Mixes sounds `s1` and `s2` together."
+  [s1 s2]
+  {:pre [(= (channels s1) (channels s2))]}
+  (let [d1 (duration s1)
+        d2 (duration s2)]
+    (reify Sound
+      (duration [this] (max d1 d2))
+      (channels [this] (channels s1))
+      (frames [this sample-rate errors]
+        (let [s1* (if (< d1 d2)
+                    (append s1 (silence (- d2 d1) (channels s1)))
+                    s1)
+              s2* (if (<= d1 d2)
+                    s2
+                    (append s2 (silence (- d1 d2) (channels s2))))]
+          (combine-frames mix-frame
+                          (frames s1* sample-rate errors)
+                          (frames s2* sample-rate errors)
+                          errors))))))
+
 (comment
 
 
 
-  (defn- combine-chunks
-    "Returns a sequence of chunks whose contents are corresponding
-  elements of chunks1 and chunks2 combined by calling `f` on them. `f`
-  should be a function of the number of samples in the chunk to be
-  produced, the first chunk, the offset in that chunk at which to
-  start, the second chunk, and the offset in that chunk at which to
-  start. If no offsets are provided, defaults to zero."
-    ([f chunks1 chunks2] (combine-chunks f chunks1 0 chunks2 0))
-    ([f chunks1 offset1 chunks2 offset2]
-       (let [[head1 & more1] chunks1
-             [head2 & more2] chunks2]
-         (cond
-          (and head1 head2)
-          (let [len1       (dbl/alength (first head1))
-                len2       (dbl/alength (first head2))
-                samples    (min (- len1 offset1) (- len2 offset2))
-                consumed1? (= len1 (+ samples offset1))
-                consumed2? (= len2 (+ samples offset2))]
-            (lazy-seq
-             (cons
-              (f samples head1 offset1 head2 offset2)
-              (combine-chunks f
-                              (if consumed1? more1 chunks1)
-                              (if consumed1? 0 (+ offset1 samples))
-                              (if consumed2? more2 chunks2)
-                              (if consumed2? 0 (+ offset2 samples))))))
 
-          (and head1 (not head2))
-          (cons (map #(dbl-asub % offset1 (dbl/alength %)) head1)
-                more1)
 
-          (and (not head1) head2)
-          (cons (map #(dbl-asub % offset2 (dbl/alength %)) head2)
-                more2)))))
 
-  (defn mix
-    "Mixes sounds `s1` and `s2` together."
-    [s1 s2]
-    {:pre [(= (channels s1) (channels s2))]}
-    (let [d1 (duration s1)
-          d2 (duration s2)]
-      (reify SampledSound
-        (duration [this] (max d1 d2))
-        (channels [this] (channels s1))
-        (chunks [this sample-rate]
-          (let [s1* (if (< d1 d2)
-                      (append s1 (silence (- d2 d1) (channels s1)))
-                      s1)
-                s2* (if (<= d1 d2)
-                      s2
-                      (append s2 (silence (- d1 d2) (channels s2))))]
-            (combine-chunks (fn mix-fn [samples head1 offset1 head2 offset2]
-                              (let [o1 (long offset1)
-                                    o2 (long offset2)]
-                                (map #(dbl/amake [i samples]
-                                                 (p/+ (dbl/aget %1 (p/+ i o1))
-                                                      (dbl/aget %2 (p/+ i o2))))
-                                     head1
-                                     head2)))
-                            (chunks s1* sample-rate)
-                            (chunks s2* sample-rate)))))))
 
   (defn gain
     "Changes the amplitude of `s` by `g`."
