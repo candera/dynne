@@ -415,10 +415,13 @@
   produced, the first chunk, the offset in that chunk at which to
   start, the second chunk, and the offset in that chunk at which to
   start. If no offsets are provided, defaults to zero. If either
-  channel runs out of data, delivers the remaining data in the other channel
-  without applying f."
-  ([f input1 input2 errors] (combine-frames f input1 0 input2 0 errors))
-  ([f input1 offset1 input2 offset2 errors]
+  channel runs out of data, delivers the remaining data in the other
+  channel without applying f. `on-eof` specifies what to do when
+  reaching the end of one of the inputs, and must be `:terminate` or
+  `:continue`. If :continue, provides the remainder of the other
+  input. If :terminate, closes the output."
+  ([f input1 input2 errors on-eof] (combine-frames f input1 0 input2 0 errors on-eof))
+  ([f input1 offset1 input2 offset2 errors on-eof]
      (let [out (make-chan)]
        (go
         (try
@@ -439,12 +442,12 @@
                       (if consumed2? (take-frame input2 errors) frame2)
                       (if consumed2? 0 (+ offset2 samples))))
 
-             (and frame1 (not frame2))
+             (and (= on-eof :continue) frame1 (not frame2))
              (do
                (>! out (map #(dbl-asub % offset1 (dbl/alength %)) frame1))
                (recur (take-frame input1 errors) 0 nil 0))
 
-             (and (not frame1) frame2)
+             (and (= on-eof :continue) (not frame1) frame2)
              (do
                (>! out (map #(dbl-asub % offset2 (dbl/alength %)) frame2))
                (recur nil 0 (take-frame input2 errors) 0))))
@@ -454,7 +457,7 @@
             (close! out))))
        out)))
 
-(defn- mix-frame
+(defn- add-frame
   "Adds two frames together, starting at the corresponding `offset`
   inside each one."
   [samples frame1 offset1 frame2 offset2]
@@ -476,10 +479,11 @@
       (duration [this] (max d1 d2))
       (channels [this] (channels s1))
       (frames [this sample-rate errors]
-        (combine-frames mix-frame
+        (combine-frames add-frame
                         (frames s1 sample-rate errors)
                         (frames s2 sample-rate errors)
-                        errors)))))
+                        errors
+                        :continue)))))
 
 (defn gain
   "Multiplies the amplitudes of `s` by `g`."
@@ -507,7 +511,31 @@
            (finally (close! out))))
         out))))
 
+(defn multiply-frame
+  "Multiplies the samples in two frames together, starting at the
+  corresponding `offset` inside each one."
+  [samples frame1 offset1 frame2 offset2]
+  (map #(dbl/amake [i samples]
+                   (p/* (dbl/aget %1 (p/+ i (long offset1)))
+                        (dbl/aget %2 (p/+ i (long offset2)))))
+       frame1
+       frame2))
 
+(defn envelope
+  "Multiplies the amplitudes of `s1` and `s2`, trimming the sound to
+  the shorter of the two."
+  [s1 s2]
+  {:pre [(= (channels s1) (channels s2))]}
+  (let [dur (min (duration s1) (duration s2))]
+    (reify Sound
+      (duration [this] dur)
+      (channels [this] (channels s1))
+      (frames [this sample-rate errors]
+        (combine-frames multiply-frame
+                        (frames s1 sample-rate errors)
+                        (frames s2 sample-rate errors)
+                        errors
+                        :terminate)))))
 (comment
 
 
@@ -518,30 +546,7 @@
 
 
 
-  (defn envelope
-    "Multiplies the amplitudes of `s1` and `s2`, trimming the sound to
-  the shorter of the two."
-    [s1 s2]
-    {:pre [(= (channels s1) (channels s2))]}
-    (let [dur (min (duration s1) (duration s2))]
-      (reify SampledSound
-        (duration [this] dur)
-        (channels [this] (channels s1))
-        (chunks [this sample-rate]
-          (let [s1* (if (< dur (duration s1))
-                      (trim s1 0 dur)
-                      s1)
-                s2* (if (< dur (duration s2))
-                      (trim s2 0 dur)
-                      s2)]
-            (combine-chunks (fn envelope-fn [samples head1 offset1 head2 offset2]
-                              (map #(dbl/amake [i samples]
-                                               (p/* (dbl/aget %1 (p/+ i (long offset1)))
-                                                    (dbl/aget %2 (p/+ i (long offset2)))))
-                                   head1
-                                   head2))
-                            (chunks s1* sample-rate)
-                            (chunks s2* sample-rate)))))))
+
 
   (defn fade-in
     "Fades `s` linearly from zero at the beginning to full volume at
