@@ -43,7 +43,7 @@
 
 ;;; Helpers
 
-(defn frame
+(defn take-frame
   "Given an channel producing frames and an error channel, produce the
   next frame from the frame channel, unless an error is available on
   the error channel, in which case, throw it. Return nil if the frames
@@ -57,7 +57,7 @@
   "Given a sound and a sample rate, return a regular Clojure seq of
   the frames."
   [frames errors]
-  (when-let [frame (frame frames errors)]
+  (when-let [frame (take-frame frames errors)]
     (lazy-seq (cons frame (frame-seq frames errors)))))
 
 ;;; Sound construction
@@ -258,7 +258,7 @@
   ([s sample-rate limit]
      (let [errors (make-chan)
            frames (frames s sample-rate errors)]
-       (loop [frame (frame frames errors)
+       (loop [frame (take-frame frames errors)
               max-amplitude Double/MIN_VALUE]
          (cond
           ;; Short-circuit if we hit `limit`
@@ -268,7 +268,7 @@
           (not frame) max-amplitude
 
           :else
-          (recur (frame frames errors)
+          (recur (take-frame frames errors)
                  (double (apply max
                                 (map (fn [arr]
                                        (dbl/areduce [e arr]
@@ -375,7 +375,7 @@
            (try
              (loop [samples-to-drop samples-to-drop
                     samples-to-take samples-to-take]
-               (if-let [frame (frame src-frames errors)]
+               (if-let [frame (take-frame src-frames errors)]
                  (let [frame-length (dbl/alength (first frame))]
                    (cond
 
@@ -422,9 +422,9 @@
      (let [out (make-chan)]
        (go
         (try
-          (loop [frame1 (frame input1 errors)
+          (loop [frame1 (take-frame input1 errors)
                  offset1 offset1
-                 frame2 (frame input2 errors)
+                 frame2 (take-frame input2 errors)
                  offset2 offset2]
             (cond
              (and frame1 frame2)
@@ -434,20 +434,20 @@
                    consumed1? (= len1 (+ samples offset1))
                    consumed2? (= len2 (+ samples offset2))]
                (>! out (f samples frame1 offset1 frame2 offset2))
-               (recur (if consumed1? (frame input1 errors) frame1)
+               (recur (if consumed1? (take-frame input1 errors) frame1)
                       (if consumed1? 0 (+ offset1 samples))
-                      (if consumed2? (frame input2 errors) frame2)
+                      (if consumed2? (take-frame input2 errors) frame2)
                       (if consumed2? 0 (+ offset2 samples))))
 
              (and frame1 (not frame2))
              (do
                (>! out (map #(dbl-asub % offset1 (dbl/alength %)) frame1))
-               (recur (frame input1 errors) 0 nil 0))
+               (recur (take-frame input1 errors) 0 nil 0))
 
              (and (not frame1) frame2)
              (do
                (>! out (map #(dbl-asub % offset2 (dbl/alength %)) frame2))
-               (recur nil 0 (frame input2 errors) 0))))
+               (recur nil 0 (take-frame input2 errors) 0))))
           (catch Throwable t
             (>! errors t))
           (finally
@@ -455,7 +455,8 @@
        out)))
 
 (defn- mix-frame
-  "Adds two frames together."
+  "Adds two frames together, starting at the corresponding `offset`
+  inside each one."
   [samples frame1 offset1 frame2 offset2]
   (let [o1 (long offset1)
         o2 (long offset2)]
@@ -475,16 +476,37 @@
       (duration [this] (max d1 d2))
       (channels [this] (channels s1))
       (frames [this sample-rate errors]
-        (let [s1* (if (< d1 d2)
-                    (append s1 (silence (- d2 d1) (channels s1)))
-                    s1)
-              s2* (if (<= d1 d2)
-                    s2
-                    (append s2 (silence (- d1 d2) (channels s2))))]
-          (combine-frames mix-frame
-                          (frames s1* sample-rate errors)
-                          (frames s2* sample-rate errors)
-                          errors))))))
+        (combine-frames mix-frame
+                        (frames s1 sample-rate errors)
+                        (frames s2 sample-rate errors)
+                        errors)))))
+
+(defn gain
+  "Multiplies the amplitudes of `s` by `g`."
+  [s ^double g]
+  (reify Sound
+    (duration [this] (duration s))
+    (channels [this] (channels s))
+    (frames [this sample-rate errors]
+      (let [out (make-chan)
+            src (frames s sample-rate errors)]
+        ;; TODO: Make this work with go, if possible. For now, it
+        ;; requires the thread macro because go doesn't compose well
+        ;; with the type hinting emitted by the primitive math
+        ;; library.
+        (async/thread
+         (try
+           (loop []
+             (when-let [frame (take-frame src errors)]
+               (>!! out (map (fn [data]
+                              (dbl/amap [x data]
+                                        (p/* x g)))
+                            frame))
+               (recur)))
+           (catch Throwable t (>! errors t))
+           (finally (close! out))))
+        out))))
+
 
 (comment
 
@@ -494,19 +516,6 @@
 
 
 
-  (defn gain
-    "Changes the amplitude of `s` by `g`."
-    [s ^double g]
-    (reify SampledSound
-      (duration [this] (duration s))
-      (channels [this] (channels s))
-      (chunks [this sample-rate]
-        (map (fn [chunk]
-               (map (fn [channel-chunk]
-                      (dbl/amap [x channel-chunk]
-                                (p/* x g)))
-                    chunk))
-             (chunks s sample-rate)))))
 
 
   (defn envelope
