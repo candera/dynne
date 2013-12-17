@@ -281,15 +281,28 @@
 ;; An operation takes one or more sounds and returns a new sound
 
 (defn append
-  "Concatenates two sounds together"
-  [s1 s2]
-  {:pre [(= (channels s1) (channels s2))]}
+  "Concatenates any number of sounds together."
+  [& inputs]
+  {:pre [(apply = (map channels inputs))]}
   (reify Sound
-    (channels [this] (channels s1))
-    (frames [this sample-rate errors]
-      (let [dst-frames (make-chan)]
-        (async/pipe (frames s1 sample-rate errors) dst-frames false)
-        (async/pipe (frames s2 sample-rate errors) dst-frames true)))))
+    (duration [this] (->> inputs (map duration) (reduce +)))
+    (channels [this] (channels (first inputs)))
+    (frames [this sample-rate errors]n
+      (let [out (make-chan)]
+        (go
+         (try
+           (loop [[src & more :as srcs]
+                  (map #(frames % sample-rate errors) inputs)]
+             (when src
+               (if-let [frame (take-frame src errors)]
+                 (do (>! out frame)
+                     (recur srcs))
+                 (recur more))))
+           (catch Throwable t
+             (>! errors t))
+           (finally (async/close! out)))
+         (async/close! out))
+        out))))
 
 (defn- dbl-asub
   "Returns the part of `arr` whose indices fall in [`start` `end`)."
@@ -536,37 +549,26 @@
                         (frames s2 sample-rate errors)
                         errors
                         :terminate)))))
-(comment
 
-
-
-
-
-
-
-
-
-
-
-  (defn fade-in
-    "Fades `s` linearly from zero at the beginning to full volume at
+(defn fade-in
+  "Fades `s` linearly from zero at the beginning to full volume at
   `duration`."
-    [s ^double fade-duration]
-    (let [chans (channels s)]
-      (-> (linear fade-duration chans 0 1.0)
-          (append (constant (- (duration s) fade-duration) chans 1.0))
-          (envelope s))))
+  [s ^double fade-duration]
+  (let [chans (channels s)]
+    (-> (linear fade-duration chans 0 1.0)
+        (append (constant (- (duration s) fade-duration) chans 1.0))
+        (envelope s))))
 
-  (defn fade-out
-    "Fades the s to zero for the last `duration`."
-    [s ^double fade-duration]
-    (let [chans (channels s)]
-      (-> (constant (- (duration s) fade-duration) chans 1.0)
-          (append (linear fade-duration chans 1.0 0))
-          (envelope s))))
+(defn fade-out
+  "Fades the s to zero for the last `duration`."
+  [s ^double fade-duration]
+  (let [chans (channels s)]
+    (-> (constant (- (duration s) fade-duration) chans 1.0)
+        (append (linear fade-duration chans 1.0 0))
+        (envelope s))))
 
-  (defn segmented-linear
-    "Produces a sound with `chans` channels whose amplitudes change
+(defn segmented-linear
+  "Produces a sound with `chans` channels whose amplitudes change
   linearly as described by `spec`. Spec is a sequence of interleaved
   amplitudes and durations. For example the spec
 
@@ -579,18 +581,31 @@
   would produce a sound whose amplitude starts at 1.0, linearly
   changes to 0.0 at time 30, stays at 0 for 10 seconds, then ramps up
   to its final value of 1.0 over 0.5 seconds"
-    [chans & spec]
-    {:pre [(and (odd? (count spec))
-                (< 3 (count spec)))]}
-    (->> spec
-         (partition 3 2)
-         (map (fn [[start duration end]] (linear duration chans start end)))
-         (reduce append)))
+  [chans & spec]
+  {:pre [(and (odd? (count spec))
+              (< 3 (count spec)))]}
+  (->> spec
+       (partition 3 2)
+       (map (fn [[start duration end]] (linear duration chans start end)))
+       (reduce append)))
 
-  (defn timeshift
-    "Inserts `dur` seconds of silence at the beginning of `s`"
-    [s ^double dur]
-    (append (silence dur (channels s)) s))
+(defn timeshift
+  "Inserts `dur` seconds of silence at the beginning of `s`"
+  [s ^double dur]
+  (append (silence dur (channels s)) s))
+
+(comment
+
+
+
+
+
+
+
+
+
+
+
 
   (defn ->stereo
     "Creates a stereo sound. If given one single-channel sound,
