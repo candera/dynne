@@ -287,7 +287,7 @@
   (reify Sound
     (duration [this] (->> inputs (map duration) (reduce +)))
     (channels [this] (channels (first inputs)))
-    (frames [this sample-rate errors]n
+    (frames [this sample-rate errors]
       (let [out (make-chan)]
         (go
          (try
@@ -594,52 +594,46 @@
   [s ^double dur]
   (append (silence dur (channels s)) s))
 
-(comment
-
-
-
-
-
-
-
-
-
-
-
-
-  (defn ->stereo
-    "Creates a stereo sound. If given one single-channel sound,
+(defn ->stereo
+  "Creates a stereo sound. If given one single-channel sound,
   duplicates channel zero on two channels. If given a single stereo
   sound, returns it. If given two single-channel sounds, returns a
   sound with the first sound on channel 0 and the second sound on
   channel 1."
-    ([s]
-       (case (long (channels s))
-         2 s
-         1 (reify SampledSound
-             (duration [this] (duration s))
-             (channels [this] 2)
-             (chunks [this sample-rate]
-               (map (fn [[l] [r]] (vector l r))
-                    (chunks s sample-rate) (chunks s sample-rate))))
-         (throw (ex-info "Can't steroize sound with other than one or two channels"
-                         {:reason :cant-stereoize-channels
-                          :s      s}))))
-    ([l r]
-       (when-not (= 1 (channels l) (channels r))
-         (throw (ex-info "Can't steroize two sounds unless they are both single-channel"
-                         {:reason :cant-stereoize-channels
-                          :l-channels (channels l)
-                          :r-channels (channels r)})))
-       (reify SampledSound
-         (duration [this] (min (duration l) (duration r)))
-         (channels [this] 2)
-         (chunks [this sample-rate]
-           (combine-chunks (fn stereo-fn [samples [head1] offset1 [head2] offset2]
-                             [(dbl-asub head1 offset1 (+ offset1 samples))
-                              (dbl-asub head2 offset2 (+ offset2 samples))])
-                           (chunks l sample-rate)
-                           (chunks r sample-rate))))))
+  ([s]
+     (case (long (channels s))
+       2 s
+       1 (reify Sound
+           (duration [this] (duration s))
+           (channels [this] 2)
+           (frames [this sample-rate errors]
+             (async/map< (fn [[frame]] [frame frame])
+                         (frames s sample-rate errors))))
+       (throw (ex-info "Can't steroize sound with other than one or two channels"
+                       {:reason :cant-stereoize-channels
+                        :s      s}))))
+  ([l r]
+     (when-not (= 1 (channels l) (channels r))
+       (throw (ex-info "Can't steroize two sounds unless they are both single-channel"
+                       {:reason :cant-stereoize-channels
+                        :l-channels (channels l)
+                        :r-channels (channels r)})))
+     (reify Sound
+       (duration [this] (min (duration l) (duration r)))
+       (channels [this] 2)
+       (frames [this sample-rate errors]
+         (combine-frames (fn stereo-fn [samples [frame1] offset1 [frame2] offset2]
+                             [(dbl-asub frame1 offset1 (+ offset1 samples))
+                              (dbl-asub frame2 offset2 (+ offset2 samples))])
+                         (frames l sample-rate errors)
+                         (frames r sample-rate errors)
+                         errors
+                         :terminate)))))
+
+(comment
+
+
+
 
   (defn pan
     "Takes a two-channel sound and mixes the channels together by
