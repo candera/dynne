@@ -630,106 +630,159 @@
                          errors
                          :terminate)))))
 
-(comment
-
-
-
-
-  (defn pan
-    "Takes a two-channel sound and mixes the channels together by
+(defn pan
+  "Takes a two-channel sound and mixes the channels together by
   `amount`, a float on the range [0.0, 1.0]. The ususal use is to take
   a sound with separate left and right channels and combine them so
   each appears closer to stereo center. An `amount` of 0.0 would leave
   both channels unchanged, 0.5 would result in both channels being the
   same (i.e. appearing to be mixed to stereo center), and 1.0 would
   switch the channels."
-    [s ^double amount]
-    {:pre [(= 2 (channels s))]}
-    (let [amount-complement (- 1.0 amount)]
-      (reify SampledSound
-        (duration [this] (duration s))
-        (channels [this] 2)
-        (chunks [this sample-rate]
-          (map (fn [[arr1 arr2]]
-                 [(dbl/amap [e1 arr1
-                             e2 arr2]
-                            (p/+ (p/* e1 amount-complement)
-                                 (p/* e2 amount)))
-                  (dbl/amap [e1 arr1
-                             e2 arr2]
-                            (p/+ (p/* e1 amount)
-                                 (p/* e2 amount-complement)))])
-               (chunks s sample-rate))))))
-
-  ;; TODO: maybe make these into functions that return operations rather
-  ;; than sounds.
+  [s ^double amount]
+  {:pre [(= 2 (channels s))]}
+  (let [amount-complement (- 1.0 amount)]
+    (reify Sound
+      (duration [this] (duration s))
+      (channels [this] 2)
+      (frames [this sample-rate errors]
+        (async/map< (fn [[arr1 arr2]]
+                      [(dbl/amap [e1 arr1
+                                  e2 arr2]
+                                 (p/+ (p/* e1 amount-complement)
+                                      (p/* e2 amount)))
+                       (dbl/amap [e1 arr1
+                                  e2 arr2]
+                                 (p/+ (p/* e1 amount)
+                                      (p/* e2 amount-complement)))])
+                    (frames s sample-rate errors))))))
 
 ;;; Playback
 
-  ;; TODO: This is identical to the one in sound.clj. Merge them if we
-  ;; don't get rid of sound.clj
-  (defmacro shortify
-    "Takes a floating-point number f in the range [-1.0, 1.0] and scales
+;; TODO: This is identical to the one in sound.clj. Merge them if we
+;; don't get rid of sound.clj
+(defmacro shortify
+  "Takes a floating-point number f in the range [-1.0, 1.0] and scales
   it to the range of a 16-bit integer. Clamps any overflows."
-    [f]
-    (let [max-short-as-double (double Short/MAX_VALUE)]
-      `(let [clamped# (-> ~f (min 1.0) (max -1.0))]
-         (short (p/* ~max-short-as-double clamped#)))))
+  [f]
+  (let [max-short-as-double (double Short/MAX_VALUE)]
+    `(let [clamped# (-> ~f (min 1.0) (max -1.0))]
+       (short (p/* ~max-short-as-double clamped#)))))
 
-  (defn- sample-provider
-    [s ^LinkedBlockingQueue q ^long sample-rate]
-    (let [chans          (channels s)]
-      (future
-        (loop [[head-chunk & more] (chunks s sample-rate)]
-          (if-not head-chunk
-            (.put q ::eof)
-            (let [chunk-len  (dbl/alength (first head-chunk))
-                  byte-count (p/* chans 2 chunk-len)
-                  bb         (ByteBuffer/allocate byte-count)
-                  buffer     (byte-array byte-count)]
-              (dotimes [n chunk-len]
-                ;; TODO: Find a more efficient way to do this
-                (doseq [arr head-chunk]
-                  (.putShort bb (shortify (dbl/aget arr n)))))
-              (.position bb 0)
-              (.get bb buffer)
-              ;; Bail if the player gets too far behind
-              (when (.offer q buffer 2 java.util.concurrent.TimeUnit/SECONDS)
-                (recur more))))))))
+(defn maybe-put
+  "Puts v on ch, but only if v is non-nil."
+  [ch v]
+  (when v (>!! ch v)))
 
-  ;; TODO: This is identical to the one in sound.clj. Merge them if we
-  ;; don't get rid of sound.clj
-  (defn play
-    "Plays `s` asynchronously. Returns a value that can be passed to `stop`."
-    [s]
-    (let [sample-rate 44100
-          chans       (channels s)
-          sdl         (AudioSystem/getSourceDataLine (AudioFormat. sample-rate
-                                                                   16
-                                                                   chans
-                                                                   true
-                                                                   true))
-          stopped     (atom false)
-          q           (LinkedBlockingQueue. 10)
-          provider    (sample-provider s q sample-rate)]
-      {:player   (future (.open sdl)
-                         (loop [buf ^bytes (.take q)]
-                           (when-not (or @stopped (= buf ::eof))
-                             (.write sdl buf 0 (alength buf))
-                             (.start sdl) ;; Doesn't hurt to do it more than once
-                             (recur (.take q)))))
-       :stop     (fn []
-                   (reset! stopped true)
-                   (future-cancel provider)
-                   (.stop sdl))
-       :q        q
-       :provider provider
-       :sdl      sdl}))
+(defn- sample-provider
+  "Delivers byte arrays representing the data to `out`. Returns a
+  channel that can be closed to stop the process."
+  [s ^long sample-rate out]
+  (let [chans (channels s)
+        errors (make-chan)
+        frames (frames s sample-rate errors)
+        process (async/chan)]
+    (async/thread
+     (maybe-put
+      process
+      (try
+        (loop []
+          (let [[event val] (async/alt!!
+                             process ([v] [(if v :process-msg :process-close) v])
+                             frames ([f] [(if f :frame :frame-close) f])
+                             errors ([e] [:error e]))]
+               (case event
+                 ;; Process messages are ignored
+                 :process-msg (recur)
 
-  (defn stop
-    "Stops playing the sound represented by `player` (returned from `play`)."
-    [player]
-    ((:stop player)))
+                 :process-close nil
+
+                 :frame
+                 (let [chunk-len  (dbl/alength (first val))
+                       byte-count (p/* chans 2 chunk-len)
+                       bb         (ByteBuffer/allocate byte-count)
+                       buffer     (byte-array byte-count)]
+                   (dotimes [n chunk-len]
+                     ;; TODO: Find a more efficient way to do this
+                     (doseq [arr val]
+                       (.putShort bb (shortify (dbl/aget arr n)))))
+                   (.position bb 0)
+                   (.get bb buffer)
+                   (>!! out buffer)
+                   (recur))
+
+                 :frame-close nil
+
+                 :error (or val :error-channel-closed))))
+        (catch Throwable t t)))
+     (async/close! out)
+     (async/close! process))
+    process))
+
+(defn play
+  "Plays `s` asynchronously. Returns a value that can be passed to `stop`."
+  [s]
+  (let [sample-rate 44100
+        chans       (channels s)
+        sdl         (AudioSystem/getSourceDataLine (AudioFormat. sample-rate
+                                                                 16
+                                                                 chans
+                                                                 true
+                                                                 true))
+        frames      (make-chan)
+        provider    (sample-provider s sample-rate frames)]
+    {:player   (let [player (async/chan)]
+                 (.open sdl)
+                 (async/thread
+                  (maybe-put
+                   player
+                   (try
+                     (loop []
+                       (let [[event val]
+                             (async/alt!!
+                              player ([m] [(if m :player-msg :player-close) m])
+                              provider ([m] [(if m :provider-msg :provider-close) m])
+                              frames ([f] [(if f :frame :frame-close) f])
+                              (async/timeout 2000) ([_] [:timeout]))]
+                         (case event
+                           ;; TODO: Implement pause messages coming in
+                           ;; For now, ignore messages arriving
+                           :player-msg (recur)
+
+                           :player-close nil
+
+                           :provider-msg val
+
+                           :provider-close nil
+
+                           :frame (let [buf ^bytes val]
+                                    (.write sdl buf 0 (alength buf))
+                                    (.start sdl) ;; Doesn't hurt to do it more than once
+                                    (recur))
+
+                           :frame-close nil
+
+                           :timeout :timeout)))
+                     (catch Throwable t t)))
+                  (async/close! provider)
+                  (async/close! player))
+                 player)
+     :provider provider
+     :sdl      sdl}))
+
+(defn stop
+  "Stops playing the sound represented by `player` (returned from `play`)."
+  [player]
+  (async/close! (:player player)))
+
+
+
+
+(comment
+
+
+
+
+
 
 ;;; Serialization
 
