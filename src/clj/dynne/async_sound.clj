@@ -178,15 +178,22 @@
         (dbl/aset arr n (p/div (double (.getShort bb)) 32768.0))))
     arrs))
 
-(defn- sample-chunks
-  "Return a seq of chunks from an AudioInputStream."
-  [^AudioInputStream ais ^long chans ^long bytes-per-sample ^long chunk-size]
-  (let [buf (byte-array (p/* chunk-size chans bytes-per-sample))
-        bytes-read (.read ais buf)]
-    (when (pos? bytes-read)
-      (lazy-seq
-       (cons (to-double-arrays buf (long bytes-read) bytes-per-sample chans)
-             (sample-chunks ais chans bytes-per-sample chunk-size))))))
+;; TODO: Figure out how to clean this up in the face of errors.
+(defn- deliver-chunks
+  "Deliver chunks from an AudioInputStream onto `out`. Delivers errors
+  on `errors`."
+  [^AudioInputStream ais chans bytes-per-sample chunk-size out errors]
+  (let [buf (byte-array (p/* chunk-size ^long chans ^long bytes-per-sample))]
+    (async/thread
+     (try
+       (loop [bytes-read (.read ^AudioInputStream ais ^bytes buf)]
+         (when (p/< 0 bytes-read)
+           (>!! out (to-double-arrays buf (long bytes-read) bytes-per-sample chans))
+           (recur (.read ^AudioInputStream ais ^bytes buf))))
+       (catch Throwable t
+         (>!! errors t))
+       (finally
+         (async/close! out))))))
 
 (defn- read-duration
   "Given a path to a .wav or .mp3 file, return the duration in
@@ -246,8 +253,7 @@
                                                 sample-rate
                                                 true)
                                   ^AudioInputStream decoded))]
-          (async/onto-chan out-chan
-                           (sample-chunks resampled chans bytes-per-sample 10000))
+          (deliver-chunks resampled chans bytes-per-sample 10000 out-chan err-chan)
           out-chan)))))
 
 ;;; Sound manipulation
@@ -781,7 +787,7 @@
   (let [errors        (async/chan)
         ;; Empty chunks, while valid, will screw us over by causing us
         ;; to return zero from read
-        useful-chunks (async/filter< (fn [[arr]] (-> arr dbl/alength pos?))
+        useful-chunks (async/filter< (fn [[arr]] (-> arr dbl/alength (p/< 0)))
                                      (chunks s sample-rate errors)
                                      10)
         current-chunk (atom (take-chunk useful-chunks errors))

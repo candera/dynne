@@ -15,7 +15,7 @@ Available on [Clojars](https://clojars.org/org.craigandera/dynne). Put
 this in your `project.clj`:
 
 ```
-[org.craigandera/dynne "0.4.0"]
+[org.craigandera/dynne "0.4.1"]
 ```
 
 ## Concepts
@@ -99,6 +99,10 @@ combined operation is deferred until the combined sound is sampled.
 ```
 
 ## History
+
+### 0.4.1
+
+A moderate performance improvement in `async/read-sound`.
 
 ### 0.4.0
 
