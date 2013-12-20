@@ -743,8 +743,7 @@
                              (async/alt!!
                               player ([m] [(if m :player-msg :player-close) m])
                               provider ([m] [(if m :provider-msg :provider-close) m])
-                              frames ([f] [(if f :frame :frame-close) f])
-                              (async/timeout 2000) ([_] [:timeout]))]
+                              frames ([f] [(if f :frame :frame-close) f]))]
                          (case event
                            ;; TODO: Implement pause messages coming in
                            ;; For now, ignore messages arriving
@@ -761,9 +760,7 @@
                                     (.start sdl) ;; Doesn't hurt to do it more than once
                                     (recur))
 
-                           :frame-close nil
-
-                           :timeout :timeout)))
+                           :frame-close nil)))
                      (catch Throwable t t)))
                   (async/close! provider)
                   (async/close! player))
