@@ -1,4 +1,4 @@
-(defproject org.craigandera/dynne "0.4.0-SNAPSHOT"
+(defproject org.craigandera/dynne "0.4.0"
   :description "A library for working with audio"
   :url "https://github.com/candera/dynne"
   :license {:name "Eclipse Public License"
