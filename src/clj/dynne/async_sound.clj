@@ -36,29 +36,29 @@
   "Represents a sound as a channel delivering vectors of Java double arrays."
   (channels [this] "Returns the number of channels in the sound.")
   (duration [this] "Returns the duration of the sound in seconds.")
-  (frames [this sample-rate err-chan] "Returns a channel that delivers
-  frames. A frame is a vector of Java double arrays - one per audio
+  (chunks [this sample-rate err-chan] "Returns a channel that delivers
+  chunks. A chunk is a vector of Java double arrays - one per audio
   channel - populated with the data for one audio channel of sound.
   Also accepts a channel where any errors should be put."))
 
 ;;; Helpers
 
-(defn take-frame
-  "Given an channel producing frames and an error channel, produce the
-  next frame from the frame channel, unless an error is available on
-  the error channel, in which case, throw it. Return nil if the frames
+(defn take-chunk
+  "Given an channel producing chunks and an error channel, produce the
+  next chunk from the chunk channel, unless an error is available on
+  the error channel, in which case, throw it. Return nil if the chunks
   channel has closed."
-  [frames errors]
+  [chunks errors]
   (alt!!
    errors ([error] (throw error))
-   frames ([frame] frame)))
+   chunks ([chunk] chunk)))
 
-(defn frame-seq
+(defn chunk-seq
   "Given a sound and a sample rate, return a regular Clojure seq of
-  the frames."
-  [frames errors]
-  (when-let [frame (take-frame frames errors)]
-    (lazy-seq (cons frame (frame-seq frames errors)))))
+  the chunks."
+  [chunks errors]
+  (when-let [chunk (take-chunk chunks errors)]
+    (lazy-seq (cons chunk (chunk-seq chunks errors)))))
 
 ;;; Sound construction
 
@@ -85,7 +85,7 @@
        (reify Sound
          (channels [this#] ~channels-param)
          (duration [this#] duration#)
-         (frames [this# ~sample-rate err-chan#]
+         (chunks [this# ~sample-rate err-chan#]
            (let [chunk-size#  10000
                  ~num-samples (long (* duration# ~sample-rate))
                  num-chunks#  (-> ~num-samples (/ chunk-size#) Math/ceil long)
@@ -219,7 +219,7 @@
     (reify Sound
       (channels [this] chans)
       (duration [this] dur)
-      (frames [this sample-rate err-chan]
+      (chunks [this sample-rate err-chan]
         (let [out-chan         (make-chan)
               bits-per-sample  16
               bytes-per-sample (-> bits-per-sample (/ 8) long)
@@ -259,24 +259,24 @@
   ([s sample-rate] (peak s sample-rate Double/MAX_VALUE))
   ([s sample-rate limit]
      (let [errors (make-chan)
-           frames (frames s sample-rate errors)]
-       (loop [frame (take-frame frames errors)
+           chunks (chunks s sample-rate errors)]
+       (loop [chunk (take-chunk chunks errors)
               max-amplitude Double/MIN_VALUE]
          (cond
           ;; Short-circuit if we hit `limit`
           (< limit max-amplitude) max-amplitude
 
-          ;; Frames has been consumed
-          (not frame) max-amplitude
+          ;; Chunks has been consumed
+          (not chunk) max-amplitude
 
           :else
-          (recur (take-frame frames errors)
+          (recur (take-chunk chunks errors)
                  (double (apply max
                                 (map (fn [arr]
                                        (dbl/areduce [e arr]
                                                     m max-amplitude
                                                     (max m (Math/abs e))))
-                                     frame)))))))))
+                                     chunk)))))))))
 
 ;;; Sound operations
 
@@ -289,15 +289,15 @@
   (reify Sound
     (duration [this] (->> inputs (map duration) (reduce +)))
     (channels [this] (channels (first inputs)))
-    (frames [this sample-rate errors]
+    (chunks [this sample-rate errors]
       (let [out (make-chan)]
         (go
          (try
            (loop [[src & more :as srcs]
-                  (map #(frames % sample-rate errors) inputs)]
+                  (map #(chunks % sample-rate errors) inputs)]
              (when src
-               (if-let [frame (take-frame src errors)]
-                 (do (>! out frame)
+               (if-let [chunk (take-chunk src errors)]
+                 (do (>! out chunk)
                      (recur srcs))
                  (recur more))))
            (catch Throwable t
@@ -364,8 +364,8 @@
     s
     (reify Sound
       (channels [this] n)
-      (frames [this sample-rate errors]
-        (pipef (frames s sample-rate errors)
+      (chunks [this sample-rate errors]
+        (pipef (chunks s sample-rate errors)
                (make-chan)
                (fn [[arr]] (repeat n arr)))))))
 
@@ -380,52 +380,52 @@
     (reify Sound
       (duration [this] dur)
       (channels [this] (channels s))
-      (frames [this sample-rate errors]
+      (chunks [this sample-rate errors]
         (let [samples-to-drop (-> start (* sample-rate) long)
               samples-to-take (-> dur (* sample-rate) long)
-              src-frames (frames s sample-rate errors)
+              src-chunks (chunks s sample-rate errors)
               out-chan (make-chan)]
           ;; TODO: This doesn't work with go - figure out why and switch
           (async/thread
            (try
              (loop [samples-to-drop samples-to-drop
                     samples-to-take samples-to-take]
-               (if-let [frame (take-frame src-frames errors)]
-                 (let [frame-length (dbl/alength (first frame))]
+               (if-let [chunk (take-chunk src-chunks errors)]
+                 (let [chunk-length (dbl/alength (first chunk))]
                    (cond
 
                     ;; First we maybe drop a bunch of samples
                     (pos? samples-to-drop)
-                    (if (< samples-to-drop frame-length)
+                    (if (< samples-to-drop chunk-length)
                       ;; It's possible we're asked to take fewer
-                      ;; than remain in the frame
-                      (let [partial-frame-samples (min samples-to-take
-                                                       (- frame-length samples-to-drop))]
+                      ;; than remain in the chunk
+                      (let [partial-chunk-samples (min samples-to-take
+                                                       (- chunk-length samples-to-drop))]
                         (>!! out-chan (map #(dbl-asub %
                                                       samples-to-drop
-                                                      (+ partial-frame-samples samples-to-drop))
-                                           frame))
-                        (recur 0 (- samples-to-take partial-frame-samples)))
-                      (recur (- samples-to-drop frame-length)
+                                                      (+ partial-chunk-samples samples-to-drop))
+                                           chunk))
+                        (recur 0 (- samples-to-take partial-chunk-samples)))
+                      (recur (- samples-to-drop chunk-length)
                              samples-to-take))
 
                     ;; Then we maybe take some
                     (pos? samples-to-take)
-                    (do (if (< samples-to-take frame-length)
-                          (>!! out-chan (map #(dbl-asub % 0 samples-to-take) frame))
-                          (>!! out-chan frame))
+                    (do (if (< samples-to-take chunk-length)
+                          (>!! out-chan (map #(dbl-asub % 0 samples-to-take) chunk))
+                          (>!! out-chan chunk))
                         (recur samples-to-drop
-                               (- samples-to-take frame-length)))))))
+                               (- samples-to-take chunk-length)))))))
              (catch Throwable t
                (>!! errors t))
              (finally
                (close! out-chan))))
           out-chan)))))
 
-(defn- combine-frames
+(defn- combine-chunks
   "Returns a channel that will deliver a sequence of chunks whose
   contents are corresponding elements of `input1` and `input2`, each a
-  channel delivering frames, combined by calling `f` on them. `f`
+  channel delivering chunks, combined by calling `f` on them. `f`
   should be a function of the number of samples in the chunk to be
   produced, the first chunk, the offset in that chunk at which to
   start, the second chunk, and the offset in that chunk at which to
@@ -435,54 +435,54 @@
   reaching the end of one of the inputs, and must be `:terminate` or
   `:continue`. If :continue, provides the remainder of the other
   input. If :terminate, closes the output."
-  ([f input1 input2 errors on-eof] (combine-frames f input1 0 input2 0 errors on-eof))
+  ([f input1 input2 errors on-eof] (combine-chunks f input1 0 input2 0 errors on-eof))
   ([f input1 offset1 input2 offset2 errors on-eof]
      (let [out (make-chan)]
        (go
         (try
-          (loop [frame1 (take-frame input1 errors)
+          (loop [chunk1 (take-chunk input1 errors)
                  offset1 offset1
-                 frame2 (take-frame input2 errors)
+                 chunk2 (take-chunk input2 errors)
                  offset2 offset2]
             (cond
-             (and frame1 frame2)
-             (let [len1       (dbl/alength (first frame1))
-                   len2       (dbl/alength (first frame2))
+             (and chunk1 chunk2)
+             (let [len1       (dbl/alength (first chunk1))
+                   len2       (dbl/alength (first chunk2))
                    samples    (min (- len1 offset1) (- len2 offset2))
                    consumed1? (= len1 (+ samples offset1))
                    consumed2? (= len2 (+ samples offset2))]
-               (>! out (f samples frame1 offset1 frame2 offset2))
-               (recur (if consumed1? (take-frame input1 errors) frame1)
+               (>! out (f samples chunk1 offset1 chunk2 offset2))
+               (recur (if consumed1? (take-chunk input1 errors) chunk1)
                       (if consumed1? 0 (+ offset1 samples))
-                      (if consumed2? (take-frame input2 errors) frame2)
+                      (if consumed2? (take-chunk input2 errors) chunk2)
                       (if consumed2? 0 (+ offset2 samples))))
 
-             (and (= on-eof :continue) frame1 (not frame2))
+             (and (= on-eof :continue) chunk1 (not chunk2))
              (do
-               (>! out (map #(dbl-asub % offset1 (dbl/alength %)) frame1))
-               (recur (take-frame input1 errors) 0 nil 0))
+               (>! out (map #(dbl-asub % offset1 (dbl/alength %)) chunk1))
+               (recur (take-chunk input1 errors) 0 nil 0))
 
-             (and (= on-eof :continue) (not frame1) frame2)
+             (and (= on-eof :continue) (not chunk1) chunk2)
              (do
-               (>! out (map #(dbl-asub % offset2 (dbl/alength %)) frame2))
-               (recur nil 0 (take-frame input2 errors) 0))))
+               (>! out (map #(dbl-asub % offset2 (dbl/alength %)) chunk2))
+               (recur nil 0 (take-chunk input2 errors) 0))))
           (catch Throwable t
             (>! errors t))
           (finally
             (close! out))))
        out)))
 
-(defn- add-frame
-  "Adds two frames together, starting at the corresponding `offset`
+(defn- add-chunk
+  "Adds two chunks together, starting at the corresponding `offset`
   inside each one."
-  [samples frame1 offset1 frame2 offset2]
+  [samples chunk1 offset1 chunk2 offset2]
   (let [o1 (long offset1)
         o2 (long offset2)]
     (map #(dbl/amake [i samples]
                      (p/+ (dbl/aget %1 (p/+ i o1))
                           (dbl/aget %2 (p/+ i o2))))
-         frame1
-         frame2)))
+         chunk1
+         chunk2)))
 
 (defn mix
   "Mixes sounds `s1` and `s2` together."
@@ -493,10 +493,10 @@
     (reify Sound
       (duration [this] (max d1 d2))
       (channels [this] (channels s1))
-      (frames [this sample-rate errors]
-        (combine-frames add-frame
-                        (frames s1 sample-rate errors)
-                        (frames s2 sample-rate errors)
+      (chunks [this sample-rate errors]
+        (combine-chunks add-chunk
+                        (chunks s1 sample-rate errors)
+                        (chunks s2 sample-rate errors)
                         errors
                         :continue)))))
 
@@ -506,9 +506,9 @@
   (reify Sound
     (duration [this] (duration s))
     (channels [this] (channels s))
-    (frames [this sample-rate errors]
+    (chunks [this sample-rate errors]
       (let [out (make-chan)
-            src (frames s sample-rate errors)]
+            src (chunks s sample-rate errors)]
         ;; TODO: Make this work with go, if possible. For now, it
         ;; requires the thread macro because go doesn't compose well
         ;; with the type hinting emitted by the primitive math
@@ -516,25 +516,25 @@
         (async/thread
          (try
            (loop []
-             (when-let [frame (take-frame src errors)]
+             (when-let [chunk (take-chunk src errors)]
                (>!! out (map (fn [data]
                               (dbl/amap [x data]
                                         (p/* x g)))
-                            frame))
+                            chunk))
                (recur)))
            (catch Throwable t (>! errors t))
            (finally (close! out))))
         out))))
 
-(defn multiply-frame
-  "Multiplies the samples in two frames together, starting at the
+(defn multiply-chunk
+  "Multiplies the samples in two chunks together, starting at the
   corresponding `offset` inside each one."
-  [samples frame1 offset1 frame2 offset2]
+  [samples chunk1 offset1 chunk2 offset2]
   (map #(dbl/amake [i samples]
                    (p/* (dbl/aget %1 (p/+ i (long offset1)))
                         (dbl/aget %2 (p/+ i (long offset2)))))
-       frame1
-       frame2))
+       chunk1
+       chunk2))
 
 (defn envelope
   "Multiplies the amplitudes of `s1` and `s2`, trimming the sound to
@@ -545,10 +545,10 @@
     (reify Sound
       (duration [this] dur)
       (channels [this] (channels s1))
-      (frames [this sample-rate errors]
-        (combine-frames multiply-frame
-                        (frames s1 sample-rate errors)
-                        (frames s2 sample-rate errors)
+      (chunks [this sample-rate errors]
+        (combine-chunks multiply-chunk
+                        (chunks s1 sample-rate errors)
+                        (chunks s2 sample-rate errors)
                         errors
                         :terminate)))))
 
@@ -608,9 +608,9 @@
        1 (reify Sound
            (duration [this] (duration s))
            (channels [this] 2)
-           (frames [this sample-rate errors]
-             (async/map< (fn [[frame]] [frame frame])
-                         (frames s sample-rate errors))))
+           (chunks [this sample-rate errors]
+             (async/map< (fn [[chunk]] [chunk chunk])
+                         (chunks s sample-rate errors))))
        (throw (ex-info "Can't steroize sound with other than one or two channels"
                        {:reason :cant-stereoize-channels
                         :s      s}))))
@@ -623,12 +623,12 @@
      (reify Sound
        (duration [this] (min (duration l) (duration r)))
        (channels [this] 2)
-       (frames [this sample-rate errors]
-         (combine-frames (fn stereo-fn [samples [frame1] offset1 [frame2] offset2]
-                             [(dbl-asub frame1 offset1 (+ offset1 samples))
-                              (dbl-asub frame2 offset2 (+ offset2 samples))])
-                         (frames l sample-rate errors)
-                         (frames r sample-rate errors)
+       (chunks [this sample-rate errors]
+         (combine-chunks (fn stereo-fn [samples [chunk1] offset1 [chunk2] offset2]
+                             [(dbl-asub chunk1 offset1 (+ offset1 samples))
+                              (dbl-asub chunk2 offset2 (+ offset2 samples))])
+                         (chunks l sample-rate errors)
+                         (chunks r sample-rate errors)
                          errors
                          :terminate)))))
 
@@ -646,7 +646,7 @@
     (reify Sound
       (duration [this] (duration s))
       (channels [this] 2)
-      (frames [this sample-rate errors]
+      (chunks [this sample-rate errors]
         (async/map< (fn [[arr1 arr2]]
                       [(dbl/amap [e1 arr1
                                   e2 arr2]
@@ -656,7 +656,7 @@
                                   e2 arr2]
                                  (p/+ (p/* e1 amount)
                                       (p/* e2 amount-complement)))])
-                    (frames s sample-rate errors))))))
+                    (chunks s sample-rate errors))))))
 
 ;;; Playback
 
@@ -681,7 +681,7 @@
   [s ^long sample-rate out]
   (let [chans (channels s)
         errors (make-chan)
-        frames (frames s sample-rate errors)
+        chunks (chunks s sample-rate errors)
         process (async/chan)]
     (async/thread
      (maybe-put
@@ -690,7 +690,7 @@
         (loop []
           (let [[event val] (async/alt!!
                              process ([v] [(if v :process-msg :process-close) v])
-                             frames ([f] [(if f :frame :frame-close) f])
+                             chunks ([f] [(if f :chunk :chunk-close) f])
                              errors ([e] [:error e]))]
                (case event
                  ;; Process messages are ignored
@@ -698,7 +698,7 @@
 
                  :process-close nil
 
-                 :frame
+                 :chunk
                  (let [chunk-len  (dbl/alength (first val))
                        byte-count (p/* chans 2 chunk-len)
                        bb         (ByteBuffer/allocate byte-count)
@@ -712,7 +712,7 @@
                    (>!! out buffer)
                    (recur))
 
-                 :frame-close nil
+                 :chunk-close nil
 
                  :error (or val :error-channel-closed))))
         (catch Throwable t t)))
@@ -730,8 +730,8 @@
                                                                  chans
                                                                  true
                                                                  true))
-        frames      (make-chan)
-        provider    (sample-provider s sample-rate frames)]
+        chunks      (make-chan)
+        provider    (sample-provider s sample-rate chunks)]
     {:player   (let [player (async/chan)]
                  (.open sdl)
                  (async/thread
@@ -743,7 +743,7 @@
                              (async/alt!!
                               player ([m] [(if m :player-msg :player-close) m])
                               provider ([m] [(if m :provider-msg :provider-close) m])
-                              frames ([f] [(if f :frame :frame-close) f]))]
+                              chunks ([f] [(if f :chunk :chunk-close) f]))]
                          (case event
                            ;; TODO: Implement pause messages coming in
                            ;; For now, ignore messages arriving
@@ -755,12 +755,12 @@
 
                            :provider-close nil
 
-                           :frame (let [buf ^bytes val]
+                           :chunk (let [buf ^bytes val]
                                     (.write sdl buf 0 (alength buf))
                                     (.start sdl) ;; Doesn't hurt to do it more than once
                                     (recur))
 
-                           :frame-close nil)))
+                           :chunk-close nil)))
                      (catch Throwable t t)))
                   (async/close! provider)
                   (async/close! player))
@@ -886,7 +886,7 @@
                              16000
                              44100)
            errors          (chan)
-           channel-chunks  (map #(nth % c) (frame-seq (frames s sample-rate errors) errors))
+           channel-chunks  (map #(nth % c) (chunk-seq (chunks s sample-rate errors) errors))
            num-samples     (-> s duration (* sample-rate) long)
            sample-period   (max 1 (-> num-samples (/ num-data-points) long))
            indexes         (range 0 num-samples sample-period)
