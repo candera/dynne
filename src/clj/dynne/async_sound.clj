@@ -217,6 +217,8 @@
         file-sample-rate     (.getSampleRate base-file-format)
         file-encoding        (.getEncoding base-file-format)]
     (reify Sound
+      (channels [this] chans)
+      (duration [this] dur)
       (frames [this sample-rate err-chan]
         (let [out-chan         (make-chan)
               bits-per-sample  16
