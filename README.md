@@ -15,7 +15,7 @@ Available on [Clojars](https://clojars.org/org.craigandera/dynne). Put
 this in your `project.clj`:
 
 ```
-[org.craigandera/dynne "0.3.0"]
+[org.craigandera/dynne "0.4.0"]
 ```
 
 ## Concepts
@@ -45,6 +45,8 @@ combined operation is deferred until the combined sound is sampled.
 
 ```clojure
 (require '[dynne.sampled-sound :refer :all])
+;; Or, to use the API based on core.async
+;; (require '[dynne.async-sound :refer :all])
 
 ;; Create a simple one-second, 440 Hz sine wave sound
 (def s (sinusoid 1.0 440))
@@ -97,6 +99,18 @@ combined operation is deferred until the combined sound is sampled.
 ```
 
 ## History
+
+### 0.4.0
+
+Introduces a new namespace, `dynne.async-sound`, which has sounds
+generate chunks in separate threads, with handoff between threads via
+[core.async](https://github.com/clojure/core.async). This should
+result in performance improvements for larger audio streams on systems
+with multiple cores.
+
+The new namespace is API-compatible with the `dynne.sampled-sound`, so
+the only change required should be to switch to requiring the new
+`dynne.async-sound` namespace.
 
 ### 0.3.0
 
