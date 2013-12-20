@@ -773,41 +773,33 @@
   [player]
   (async/close! (:player player)))
 
-
-
-
-(comment
-
-
-
-
-
-
 ;;; Serialization
 
-  (defn- sampled-input-stream
-    "Returns an implementation of `InputStream` over the data in `s`."
-    [s sample-rate]
-    (let [;; Empty chunks, while valid, will screw us over by causing us
-          ;; to return zero from read
-          useful-chunks    (remove (fn [[arr]] (== 0 (dbl/alength arr)))
-                                   (chunks s sample-rate))
-          chunks-remaining (atom useful-chunks)
-          offset           (atom 0)
-          chans            (channels s)]
-      (proxy [java.io.InputStream] []
-        (available [] (-> (duration s) (* sample-rate) long (* (channels s) 2)))
-        (close [])
-        (mark [readLimit] (throw (UnsupportedOperationException.)))
-        (markSupported [] false)
-        (read ^int
-          ([] (throw (ex-info "Not implemented" {:reason :not-implemented})))
-          ([^bytes buf] (.read this buf 0 (alength buf)))
-          ([^bytes buf off len]
-             (if-not @chunks-remaining
+(defn- sampled-input-stream
+  "Returns an implementation of `InputStream` over the data in `s`."
+  [s sample-rate]
+  (let [errors        (async/chan)
+        ;; Empty chunks, while valid, will screw us over by causing us
+        ;; to return zero from read
+        useful-chunks (async/filter< (fn [[arr]] (-> arr dbl/alength pos?))
+                                     (chunks s sample-rate errors)
+                                     10)
+        current-chunk (atom (take-chunk useful-chunks errors))
+        offset        (atom 0)
+        chans         (channels s)]
+    (proxy [java.io.InputStream] []
+      (available [] (-> (duration s) (* sample-rate) long (* (channels s) 2)))
+      (close [])
+      (mark [readLimit] (throw (UnsupportedOperationException.)))
+      (markSupported [] false)
+      (read ^int
+        ([] (throw (ex-info "Not implemented" {:reason :not-implemented})))
+        ([^bytes buf] (.read ^java.io.InputStream this buf 0 (alength buf)))
+        ([^bytes buf off len]
+           (let [head-chunk @current-chunk]
+             (if-not head-chunk
                -1
-               (let [[head-chunk & more-chunks] @chunks-remaining
-                     chunk-frames               (dbl/alength (first head-chunk))
+               (let [chunk-frames               (dbl/alength (first head-chunk))
                      start-frame                (long @offset)
                      chunk-frames-remaining     (- chunk-frames start-frame)
                      chunk-bytes-remaining      (* chunk-frames-remaining 2 chans)
@@ -837,22 +829,22 @@
                  (.position bb 0)
                  (.get bb buf off bytes-to-read)
                  (if read-remainder?
-                   (do (reset! chunks-remaining more-chunks)
+                   (do (reset! current-chunk (take-chunk useful-chunks errors))
                        (reset! offset 0))
                    (swap! offset + frames-to-read))
-                 bytes-to-read))))
-        (reset [] (throw (UnsupportedOperationException.)))
-        (skip [n] (throw (ex-info "Not implemented" {:reason :not-implemented}))))))
+                 bytes-to-read)))))
+      (reset [] (throw (UnsupportedOperationException.)))
+      (skip [n] (throw (ex-info "Not implemented" {:reason :not-implemented}))))))
 
-  (defn save
-    "Save sound `s` to `path` as a 16-bit WAV at `sample-rate`."
-    [s path sample-rate]
-    (AudioSystem/write (AudioInputStream.
-                        (sampled-input-stream s sample-rate)
-                        (AudioFormat. sample-rate 16 (channels s) true true)
-                        (-> s duration (* sample-rate) long))
-                       AudioFileFormat$Type/WAVE
-                       (io/file path))))
+(defn save
+  "Save sound `s` to `path` as a 16-bit WAV at `sample-rate`."
+  [s path sample-rate]
+  (AudioSystem/write (AudioInputStream.
+                      (sampled-input-stream s sample-rate)
+                      (AudioFormat. sample-rate 16 (channels s) true true)
+                      (-> s duration (* sample-rate) long))
+                     AudioFileFormat$Type/WAVE
+                     (io/file path)))
 
 
 ;;; Visualization
