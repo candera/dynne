@@ -219,23 +219,27 @@
   value above `limit`."
   ([s sample-rate] (peak s sample-rate Double/MAX_VALUE))
   ([s sample-rate limit]
-     (loop [[head-chunk & more-chunks] (chunks s sample-rate)
+     (loop [c             (chunks s sample-rate)
             max-amplitude Double/MIN_VALUE]
-       (cond
-        ;; Short-circuit if we hit `limit`
-        (< limit max-amplitude) max-amplitude
+       ;; It's weird that I have to do the destructuring in a let
+       ;; rather than above where we bind c, but if I don't, this loop
+       ;; retains head and runs out of memory for longer sequences.
+       (let [[head-chunk & more-chunks] c]
+        (cond
+         ;; Short-circuit if we hit `limit`
+         (< limit max-amplitude) max-amplitude
 
-        ;; Sequence has been consumed
-        (not (seq head-chunk)) max-amplitude
+         ;; Sequence has been consumed
+         (not (seq head-chunk)) max-amplitude
 
-        :else
-        (recur more-chunks
-               (apply max
-                      (map (fn [arr]
-                             (dbl/areduce [e arr]
-                                          m max-amplitude
-                                          (max m (Math/abs e))))
-                           head-chunk)))))))
+         :else
+         (recur more-chunks
+                (double (apply max
+                               (map (fn [^doubles arr]
+                                      (dbl/areduce [e arr]
+                                                   m max-amplitude
+                                                   (max m (Math/abs e))))
+                                    head-chunk)))))))))
 
 ;;; Sound operations
 
