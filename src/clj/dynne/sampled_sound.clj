@@ -618,7 +618,7 @@
       (markSupported [] false)
       (read ^int
         ([] (throw (ex-info "Not implemented" {:reason :not-implemented})))
-        ([^bytes buf] (.read this buf 0 (alength buf)))
+        ([^bytes buf] (.read ^java.io.InputStream this buf 0 (alength buf)))
         ([^bytes buf off len]
            (if-not @chunks-remaining
              -1
