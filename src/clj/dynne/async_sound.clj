@@ -787,7 +787,7 @@
   (let [errors        (async/chan)
         ;; Empty chunks, while valid, will screw us over by causing us
         ;; to return zero from read
-        useful-chunks (async/filter< (fn [[arr]] (-> arr dbl/alength (p/< 0)))
+        useful-chunks (async/filter< (fn [[arr]] (-> arr dbl/alength (p/> 0)))
                                      (chunks s sample-rate errors)
                                      10)
         current-chunk (atom (take-chunk useful-chunks errors))
