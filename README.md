@@ -67,7 +67,7 @@ combined operation is deferred until the combined sound is sampled.
 (visualize s2)
 
 ;; Get the double array holding the raw amplitude data of the first
-;; channel of the first chunk. Note that we have to pass a smaple
+;; channel of the first chunk. Note that we have to pass a sample
 ;; rate. File-based sounds will be converted to this rate.
 (ffirst (chunks s2 16000))
 ;; => #<double[] [D@53b7f3b2>
